@@ -375,7 +375,8 @@ void ReportTesterDiagnostics(void)
    PrintFormat("Tester: modelling quality %.2f%%",quality);
    if(quality<50.0)
    {
-      Print("Tester: modelling quality is very low. Download higher quality tick history in the MT5 History Center and re-run using 'Every tick based on real ticks' for reliable results.");
+      const string modellingMsg = "Tester: modelling quality is very low. Download higher quality tick history in the MT5 History Center and re-run using 'Every tick based on real ticks' for reliable results.";
+      Print(modellingMsg);
    }
 }
 //+------------------------------------------------------------------+
