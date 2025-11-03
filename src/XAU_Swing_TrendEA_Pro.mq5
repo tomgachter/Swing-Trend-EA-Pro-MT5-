@@ -115,6 +115,8 @@ double     eqEMA                    = 0.0;
 double     lastBaseOpenPrice        = 0.0;
 double     lastBaseLots             = 0.0;
 int        addonsOpened             = 0;
+// Stores the most recent valid D1 ATR regime measurement for management fallbacks.
+double     lastValidAtrD1Pts        = InpATR_D1_Pivot;
 
 //+------------------------------------------------------------------+
 //| Indicator handles                                                |
@@ -518,7 +520,6 @@ bool RiskOK(double &dayLoss,double &dd)
 
 bool RegimeOK(double &atrD1pts)
 {
-   atrD1pts=0.0;
    double point=0.0;
    if(!GetSymbolDouble(SYMBOL_POINT,point,"point") || point<=0.0)
       return false;
@@ -527,9 +528,13 @@ bool RegimeOK(double &atrD1pts)
    if(!CopyAt(hATR_D1,0,0,atr,"ATR D1") || atr<=0.0)
       return false;
 
-   atrD1pts = atr/point;
-   if(atrD1pts<InpATR_D1_MinPts || atrD1pts>InpATR_D1_MaxPts)
+   double currentAtrD1pts = atr/point;
+   if(currentAtrD1pts<InpATR_D1_MinPts || currentAtrD1pts>InpATR_D1_MaxPts)
       return false;
+
+   atrD1pts = currentAtrD1pts;
+   // Persist the last valid regime reading for downstream management fallbacks.
+   lastValidAtrD1Pts = atrD1pts;
 
    return true;
 }
@@ -881,12 +886,21 @@ void ManagePosition(void)
    }
 
    double atrD1pts=0.0;
-   if(!RegimeOK(atrD1pts))
-      return;
+   bool regimeReady=RegimeOK(atrD1pts);
 
    int dummyBars=0;
-   double slMult=0.0,tpMult=0.0;
-   GetRegimeFactors(atrD1pts,dummyBars,slMult,tpMult);
+   double slMult=InpATR_SL_mult_Base;
+   double tpMult=InpATR_TP_mult_Base;
+   if(regimeReady)
+   {
+      GetRegimeFactors(atrD1pts,dummyBars,slMult,tpMult);
+   }
+   else
+   {
+      // When the regime filter is temporarily unavailable, fall back to the last
+      // valid ATR snapshot and base multipliers to keep management responsive.
+      atrD1pts=lastValidAtrD1Pts;
+   }
 
    double riskPts = slMult*atrPts;
    if(!didPartialClose && InpPartialClose_Pct>0.0 && riskPts>0.0)
