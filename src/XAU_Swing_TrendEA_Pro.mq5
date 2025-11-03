@@ -131,8 +131,8 @@ int        hEMA_T3                  = INVALID_HANDLE;
 int        hADX_H4                  = INVALID_HANDLE;
 int        hFractals                = INVALID_HANDLE;
 
-#include "modules/MarketUtils.mqh"
-#include "modules/TradeManagement.mqh"
+#include "modules\\MarketUtils.mqh"
+#include "modules\\TradeManagement.mqh"
 
 int OnInit()
 {
