@@ -162,6 +162,7 @@ int        AdjustedHour(const MqlDateTime &t);
 bool       EquityFilterOk(void);
 void       GetRegimeFactors(const double atrD1pts,int &donchianBars,double &slMult,double &tpMult);
 void       TryOpenAddonIfEligible(void);
+void       ReportTesterDiagnostics(void);
 
 //+------------------------------------------------------------------+
 //| Utility helpers                                                  |
@@ -1014,5 +1015,29 @@ double OnTester()
    double ddPenalty = MathMax(0.3,1.0-(eqdd/10.0));
    double sizeBonus = MathMin(MathSqrt(trades/60.0),1.25);
    return pf*ddPenalty*sizeBonus;
+}
+
+void OnTesterDeinit()
+{
+   ReportTesterDiagnostics();
+}
+
+void ReportTesterDiagnostics(void)
+{
+   if(!MQLInfoInteger(MQL_TESTER))
+      return;
+
+   double quality = TesterStatistics(STAT_MODELLING_QUALITY);
+   if(quality<=0.0)
+   {
+      Print("Tester: modelling quality information is unavailable.");
+      return;
+   }
+
+   PrintFormat("Tester: modelling quality %.2f%%",quality);
+   if(quality<50.0)
+   {
+      Print("Tester: modelling quality is very low. Download higher quality tick history in the MT5 History Center and re-run using 'Every tick based on real ticks' for reliable results.");
+   }
 }
 //+------------------------------------------------------------------+
