@@ -141,6 +141,22 @@ bool RiskOK(double &dayLoss,double &dd)
    return true;
 }
 
+void UpdateEquityTracking(void)
+{
+   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
+   if(equity>equityPeak)
+      equityPeak=equity;
+
+   if(InpUseEquityFilter)
+   {
+      double a=MathMax(0.0,MathMin(1.0,InpEqEMA_Alpha));
+      if(eqEMA<=0.0)
+         eqEMA=equity;
+      else
+         eqEMA = a*equity + (1.0-a)*eqEMA;
+   }
+}
+
 bool RegimeOK(double &atrD1pts)
 {
    atrD1pts=0.0;
