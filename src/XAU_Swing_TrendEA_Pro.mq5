@@ -987,17 +987,45 @@ void TryOpenAddonIfEligible(void)
    if(!GetBidAsk(bid,ask))
       return;
 
+   int trendDir=TrendDirection();
+   if(trendDir==0)
+   {
+      PrintDebug("Addon rejected: neutral trend direction");
+      return;
+   }
+
+   double adxOut=0.0;
+   if(!ADX_OK(adxOut))
+   {
+      if(adxOut>0.0)
+         PrintDebug(StringFormat("Addon rejected: ADX %.2f below minimum %.2f",adxOut,InpMinADX_H4));
+      else
+         PrintDebug("Addon rejected: ADX not ready");
+      return;
+   }
+
+   int baseDir = (type==POSITION_TYPE_BUY ? +1 : -1);
+   if(trendDir!=baseDir)
+   {
+      PrintDebug(StringFormat("Addon rejected: trend mismatch (trend=%d base=%d)",trendDir,baseDir));
+      return;
+   }
+
    double stepDist = InpAddonStep_ATR*atrPts*point;
 
    if(type==POSITION_TYPE_BUY)
    {
       if((ask-lastBaseOpenPrice) >= (addonsOpened+1)*stepDist)
          EnterTrade(ORDER_TYPE_BUY,true);
+      else
+         PrintDebug("Addon rejected: distance requirement not met for buy");
    }
    else if(type==POSITION_TYPE_SELL)
    {
       if((lastBaseOpenPrice-bid) >= (addonsOpened+1)*stepDist)
          EnterTrade(ORDER_TYPE_SELL,true);
+      else
+         PrintDebug("Addon rejected: distance requirement not met for sell");
    }
 }
 
