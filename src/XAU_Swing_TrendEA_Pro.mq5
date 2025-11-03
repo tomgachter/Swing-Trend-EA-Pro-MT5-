@@ -858,6 +858,33 @@ void ManagePosition(void)
    double openPrice=PositionGetDouble(POSITION_PRICE_OPEN);
    double volume=PositionGetDouble(POSITION_VOLUME);
 
+   double adx=0.0;
+   bool adxPass = ADX_OK(adx);
+   bool adxAvailable = (adxPass || adx>0.0);
+   int trendDir = TrendDirection();
+
+   bool closeByTrend=false;
+   if(trendDir!=0)
+   {
+      if(type==POSITION_TYPE_BUY && trendDir<0)
+         closeByTrend=true;
+      else if(type==POSITION_TYPE_SELL && trendDir>0)
+         closeByTrend=true;
+   }
+
+   bool closeByAdx = (adxAvailable && adx<InpMinADX_H4);
+   if(closeByTrend || closeByAdx)
+   {
+      if(trade.PositionClose(InpSymbol))
+      {
+         didPartialClose   = false;
+         addonsOpened      = 0;
+         lastBaseOpenPrice = 0.0;
+         lastBaseLots      = 0.0;
+      }
+      return;
+   }
+
    double bid=0.0,ask=0.0;
    if(!GetBidAsk(bid,ask))
       return;
