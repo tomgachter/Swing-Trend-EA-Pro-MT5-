@@ -1,5 +1,7 @@
 #pragma once
 
+#include "EAGlobals.mqh"
+
 void PrintDebug(const string text)
 {
    if(InpDebug)
