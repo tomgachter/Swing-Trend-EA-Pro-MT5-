@@ -1,5 +1,7 @@
 #pragma once
 
+#include "EAGlobals.mqh"
+
 int BarsSinceOpen(void)
 {
    if(!PositionSelect(InpSymbol))
