@@ -4,10 +4,7 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#define EA_GLOBALS_IMPLEMENTATION
 #include "modules/EAGlobals.mqh"
-#undef EA_GLOBALS_IMPLEMENTATION
-
 #include "modules/MarketUtils.mqh"
 #include "modules/TradeManagement.mqh"
 
