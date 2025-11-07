@@ -9,13 +9,11 @@
 //| The Expert Advisor only relies on a very small subset of the API  |
 //| to run its optional news filter.  The definitions below emulate   |
 //| those pieces so the codebase can still be compiled.  Whenever the |
-//| native header is available simply define EA_USE_NATIVE_CALENDAR   |
-//| before including this file and the real implementation will be    |
-//| pulled in instead.                                                |
+//| native header is available this file simply includes it.  If the  |
+//| header is missing define EA_FORCE_STUB_CALENDAR before including  |
+//| this file to activate the lightweight compatibility layer.        |
 //+------------------------------------------------------------------+
-#ifdef EA_USE_NATIVE_CALENDAR
-   #include <Calendar.mqh>
-#else
+#ifdef EA_FORCE_STUB_CALENDAR
 
 // Minimal importance enumeration used by the inputs/configuration.
 enum ENUM_CALENDAR_EVENT_IMPORTANCE
@@ -56,6 +54,24 @@ int CalendarValueHistory(MqlCalendarValue &values[],const datetime from,const da
    return 0;
 }
 
-#endif // !EA_USE_NATIVE_CALENDAR
+#else
+   // Use the built-in calendar support.  Include the native header so the
+   // flag constants are available when building under the official MetaTrader
+   // toolchain.  Some stripped-down build environments do not ship the header
+   // but they can opt into the stub above by defining EA_FORCE_STUB_CALENDAR
+   // before including this file.
+   #include <Calendar.mqh>
+
+   // A few brokers ship terminals that omit the optional flag constants even
+   // when the calendar API itself is present.  The Expert Advisor only relies
+   // on the two bits defined below, therefore we provide lightweight fallbacks
+   // if the native header left them undefined.
+   #ifndef CALENDAR_FLAG_FORECAST
+      #define CALENDAR_FLAG_FORECAST (1<<0)
+   #endif
+   #ifndef CALENDAR_FLAG_REVISED
+      #define CALENDAR_FLAG_REVISED  (1<<1)
+   #endif
+#endif // !EA_FORCE_STUB_CALENDAR
 
 #endif // __EA_CALENDAR_COMPAT_MQH__
