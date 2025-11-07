@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __EA_TRADE_MANAGEMENT_MQH__
+#define __EA_TRADE_MANAGEMENT_MQH__
 
 #include "EAGlobals.mqh"
 
@@ -345,4 +346,6 @@ void TryOpenAddonIfEligible(void)
          PrintDebug("Addon rejected: distance requirement not met for sell");
    }
 }
+
+#endif // __EA_TRADE_MANAGEMENT_MQH__
 

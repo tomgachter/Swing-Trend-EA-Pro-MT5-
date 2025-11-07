@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __EA_GLOBALS_MQH__
+#define __EA_GLOBALS_MQH__
 
 #include <Trade/Trade.mqh>
 
@@ -138,3 +139,5 @@ int                 hADX_H4               = INVALID_HANDLE;
 int                 hFractals             = INVALID_HANDLE;
 
 CTrade              trade;
+
+#endif // __EA_GLOBALS_MQH__
