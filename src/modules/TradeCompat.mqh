@@ -147,20 +147,22 @@ public:
    }
 
 private:
-   ENUM_ORDER_TYPE_FILLING ResolveFilling(const string symbol) const
-   {
-      long mode=0;
-      if(SymbolInfoInteger(symbol,SYMBOL_FILLING_MODE,mode))
-      {
-         switch(mode)
-         {
-            case SYMBOL_FILLING_FOK:    return ORDER_FILLING_FOK;
-            case SYMBOL_FILLING_IOC:    return ORDER_FILLING_IOC;
-            case SYMBOL_FILLING_RETURN: return ORDER_FILLING_RETURN;
-         }
-      }
-      return ORDER_FILLING_FOK;
-   }
+     ENUM_ORDER_TYPE_FILLING ResolveFilling(const string symbol) const
+     {
+        long mode=0;
+        if(SymbolInfoInteger(symbol,SYMBOL_FILLING_MODE,mode))
+        {
+#ifdef SYMBOL_FILLING_RETURN
+           if((mode & SYMBOL_FILLING_RETURN)==SYMBOL_FILLING_RETURN)
+              return ORDER_FILLING_RETURN;
+#endif
+           if((mode & SYMBOL_FILLING_IOC)==SYMBOL_FILLING_IOC)
+              return ORDER_FILLING_IOC;
+           if((mode & SYMBOL_FILLING_FOK)==SYMBOL_FILLING_FOK)
+              return ORDER_FILLING_FOK;
+        }
+        return ORDER_FILLING_FOK;
+     }
 
    double ResolvePrice(const string symbol,const ENUM_ORDER_TYPE type) const
    {
