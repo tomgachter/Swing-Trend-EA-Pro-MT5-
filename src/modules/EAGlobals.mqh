@@ -293,6 +293,35 @@ int ParseTimeToMinutes(const string hhmm)
 }
 
 
+double ResolvePointScale(const string symbol,const double baselinePoint)
+{
+   if(baselinePoint<=0.0)
+      return 1.0;
+
+   double point=0.0;
+   if(!SymbolInfoDouble(symbol,SYMBOL_POINT,point) || point<=0.0)
+      return 1.0;
+
+   double scale = baselinePoint/point;
+   if(scale<=0.0)
+      return 1.0;
+
+   return scale;
+}
+
+void NormalizePointSensitiveSettings(EAConfig &settings,const double baselinePoint)
+{
+   double scale = ResolvePointScale(settings.symbol,baselinePoint);
+   if(scale==1.0)
+      return;
+
+   settings.breakoutBufferPts *= scale;
+   settings.atrD1MinPts       *= scale;
+   settings.atrD1MaxPts       *= scale;
+   settings.atrD1Pivot        *= scale;
+   settings.maxSpreadPoints   = (int)MathRound(settings.maxSpreadPoints*scale);
+}
+
 void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
 {
    // Shared defaults that may still leverage user supplied symbol/magic/debug values.
@@ -300,6 +329,8 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
    settings.magic           = InpMagic;
    settings.debug           = InpDebug;
    settings.tzOffsetHours   = InpTZ_OffsetHours;
+
+   const double baselinePoint = 0.001; // Preset tuning assumes 0.1 pip (1e-3) point size for gold.
 
    switch(preset)
    {
@@ -444,6 +475,8 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.minStopBufferAtr    = InpMinStopBufferAtr;
          break;
    }
+
+   NormalizePointSensitiveSettings(settings,baselinePoint);
 }
 
 void LoadInputsIntoConfig(EAConfig &settings)
