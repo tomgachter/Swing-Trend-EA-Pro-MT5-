@@ -1,7 +1,7 @@
 #ifndef __EA_GLOBALS_MQH__
 #define __EA_GLOBALS_MQH__
 
-#include <Calendar.mqh>
+#include "CalendarCompat.mqh"
 #include "TradeCompat.mqh"
 
 enum EntryMode

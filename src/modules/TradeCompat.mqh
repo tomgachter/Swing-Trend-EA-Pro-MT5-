@@ -1,6 +1,17 @@
 #ifndef __EA_TRADE_COMPAT_MQH__
 #define __EA_TRADE_COMPAT_MQH__
 
+// Error code fallbacks used when the standard definitions are not available.
+#ifndef ERR_REQUOTE
+   #define ERR_REQUOTE        138
+#endif
+#ifndef ERR_PRICE_CHANGED
+   #define ERR_PRICE_CHANGED  135
+#endif
+#ifndef ERR_OFF_QUOTES
+   #define ERR_OFF_QUOTES     136
+#endif
+
 //+------------------------------------------------------------------+
 //| Lightweight trading helper used when the standard library is     |
 //| unavailable.  It mirrors the subset of the CTrade API consumed   |
