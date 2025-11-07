@@ -51,17 +51,17 @@ input int               InpEMA_Entry_Period   = 34;                      // Defa
 input int               InpEMA_Trend1_Period  = 55;                      // Default (XAUUSD, H1): H4 trend EMA period
 input int               InpEMA_Trend2_Period  = 89;                      // Default (XAUUSD, H1): D1 trend EMA period
 input int               InpEMA_Trend3_Period  = 144;                     // Default (XAUUSD, H1): W1 trend EMA period
-input int               InpTrendVotesRequired = 3;                       // Default (XAUUSD, H1): votes required for bias
+input int               InpTrendVotesRequired = 2;                       // Default (XAUUSD, H1): votes required for bias
 input bool              InpUseClosedBarTrend  = true;                    // Default (XAUUSD, H1): use closed bars for trend votes
 input bool              InpUseSlopeFilter     = true;                    // Default (XAUUSD, H1): enable EMA slope filter
-input double            InpSlopeMin           = 0.20;                    // Default (XAUUSD, H1): minimum normalized slope
+input double            InpSlopeMin           = 0.15;                    // Default (XAUUSD, H1): minimum normalized slope
 input bool              InpHTFConfirm         = true;                    // Default (XAUUSD, H1): require H4 EMA confirmation
 
 //--- Entry mode
-input EntryMode         InpEntryMode          = ENTRY_BREAKOUT;          // Default (XAUUSD, H1): entry execution mode
+input EntryMode         InpEntryMode          = ENTRY_HYBRID;            // Default (XAUUSD, H1): entry execution mode
 
 //--- Donchian breakout
-input int               InpDonchianBars_Base  = 20;                      // Default (XAUUSD, H1): base Donchian channel length
+input int               InpDonchianBars_Base  = 16;                      // Default (XAUUSD, H1): base Donchian channel length
 input double            InpDonchianBars_MinMax= 10.0;                    // Default (XAUUSD, H1): min/max deviation from base
 input double            InpBreakoutBufferPts  = 6.0;                     // Default (XAUUSD, H1): breakout buffer in points
 
@@ -73,7 +73,7 @@ input double            InpATR_D1_Pivot       = 22000.0;                 // Defa
 input double            InpRegimeMinFactor    = 0.70;                    // Default (XAUUSD, H1): minimum scaling factor
 input double            InpRegimeMaxFactor    = 1.45;                    // Default (XAUUSD, H1): maximum scaling factor
 input int               InpADX_Period         = 14;                      // Default (XAUUSD, H1): ADX period (H4)
-input double            InpMinADX_H4          = 20.0;                    // Default (XAUUSD, H1): minimum ADX threshold
+input double            InpMinADX_H4          = 18.0;                    // Default (XAUUSD, H1): minimum ADX threshold
 
 //--- Stops and targets
 input int               InpATR_Period         = 14;                      // Default (XAUUSD, H1): ATR period for SL/TP (H4)
@@ -96,11 +96,11 @@ input double            InpATR_Trail_mult     = 1.8;                     // Defa
 input int               InpFractal_ShiftBars  = 2;                       // Default (XAUUSD, H1): fractal shift bars
 
 //--- Anti-noise controls
-input int               InpCooldownBars       = 2;                       // Default (XAUUSD, H1): bars between new entries
-input double            InpMaxExtension_ATR   = 1.6;                     // Default (XAUUSD, H1): maximum distance from EMA in ATR
+input int               InpCooldownBars       = 1;                       // Default (XAUUSD, H1): bars between new entries
+input double            InpMaxExtension_ATR   = 2.0;                     // Default (XAUUSD, H1): maximum distance from EMA in ATR
 
 //--- Session filters
-input bool              InpUseSessionBias     = true;                    // Default (XAUUSD, H1): restrict entries to core sessions
+input bool              InpUseSessionBias     = false;                   // Default (XAUUSD, H1): restrict entries to core sessions
 input int               InpSess1_StartHour    = 7;                       // Default (XAUUSD, H1): Session 1 start (UTC)
 input int               InpSess1_EndHour      = 12;                      // Default (XAUUSD, H1): Session 1 end (UTC)
 input int               InpSess2_StartHour    = 13;                      // Default (XAUUSD, H1): Session 2 start (UTC)
@@ -344,15 +344,15 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.emaTrend1Period     = 55;
          settings.emaTrend2Period     = 89;
          settings.emaTrend3Period     = 144;
-         settings.trendVotesRequired  = 3;
+         settings.trendVotesRequired  = 2;
          settings.useClosedBarTrend   = true;
          settings.useSlopeFilter      = true;
-         settings.slopeMin            = 0.22;
+         settings.slopeMin            = 0.16;
          settings.useHTFConfirm       = true;
-         settings.entryMode           = ENTRY_BREAKOUT;
-         settings.donchianBarsBase    = 18;
+         settings.entryMode           = ENTRY_HYBRID;
+         settings.donchianBarsBase    = 16;
          settings.donchianBarsMinMax  = 10.0;
-         settings.breakoutBufferPts   = 6.0;
+         settings.breakoutBufferPts   = 5.0;
          settings.atrD1Period         = 14;
          settings.atrD1MinPts         = 7500.0;
          settings.atrD1MaxPts         = 38000.0;
@@ -360,7 +360,7 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.regimeMinFactor     = 0.70;
          settings.regimeMaxFactor     = 1.40;
          settings.adxPeriod           = 14;
-         settings.minAdxH4            = 22.0;
+         settings.minAdxH4            = 19.0;
          settings.atrPeriod           = 14;
          settings.atrSlMultBase       = 2.30;
          settings.atrTpMultBase       = 3.40;
@@ -375,9 +375,9 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.trailingMode        = TRAIL_CHANDELIER;
          settings.atrTrailMult        = 1.9;
          settings.fractalShiftBars    = 2;
-         settings.cooldownBars        = 2;
-         settings.maxExtensionAtr     = 1.5;
-         settings.useSessionBias      = true;
+         settings.cooldownBars        = 1;
+         settings.maxExtensionAtr     = 1.9;
+         settings.useSessionBias      = false;
          settings.sess1StartHour      = 6;
          settings.sess1EndHour        = 11;
          settings.sess2StartHour      = 12;
@@ -415,15 +415,15 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.emaTrend1Period     = 55;
          settings.emaTrend2Period     = 89;
          settings.emaTrend3Period     = 144;
-         settings.trendVotesRequired  = 3;
+         settings.trendVotesRequired  = 2;
          settings.useClosedBarTrend   = true;
          settings.useSlopeFilter      = true;
-         settings.slopeMin            = 0.20;
+         settings.slopeMin            = 0.15;
          settings.useHTFConfirm       = true;
-         settings.entryMode           = ENTRY_BREAKOUT;
-         settings.donchianBarsBase    = 20;
+         settings.entryMode           = ENTRY_HYBRID;
+         settings.donchianBarsBase    = 16;
          settings.donchianBarsMinMax  = 10.0;
-         settings.breakoutBufferPts   = 6.0;
+         settings.breakoutBufferPts   = 5.0;
          settings.atrD1Period         = 14;
          settings.atrD1MinPts         = 8000.0;
          settings.atrD1MaxPts         = 42000.0;
@@ -431,7 +431,7 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.regimeMinFactor     = 0.70;
          settings.regimeMaxFactor     = 1.45;
          settings.adxPeriod           = 14;
-         settings.minAdxH4            = 20.0;
+         settings.minAdxH4            = 18.0;
          settings.atrPeriod           = 14;
          settings.atrSlMultBase       = 2.40;
          settings.atrTpMultBase       = 3.60;
@@ -446,9 +446,9 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.trailingMode        = TRAIL_CHANDELIER;
          settings.atrTrailMult        = 1.8;
          settings.fractalShiftBars    = 2;
-         settings.cooldownBars        = 2;
-         settings.maxExtensionAtr     = 1.6;
-         settings.useSessionBias      = true;
+         settings.cooldownBars        = 1;
+         settings.maxExtensionAtr     = 2.0;
+         settings.useSessionBias      = false;
          settings.sess1StartHour      = 7;
          settings.sess1EndHour        = 12;
          settings.sess2StartHour      = 13;
