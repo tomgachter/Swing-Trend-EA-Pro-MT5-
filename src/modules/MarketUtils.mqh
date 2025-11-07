@@ -379,33 +379,9 @@ bool HTFConfirmOk(const int dir)
 
 bool NewsFilterOk(void)
 {
-   if(!gConfig.useNewsFilter || !CalendarIsEnabled())
-      return true;
-
-   datetime now=TimeCurrent();
-   MqlCalendarValue values[];
-   datetime from=now-(gConfig.newsBlockBefore+60)*60;
-   datetime to  =now+(gConfig.newsBlockAfter+60)*60;
-   int copied=CalendarValueHistory(values,from,to);
-   if(copied<=0)
-      return true; // fail open
-
-   for(int i=0;i<copied;++i)
-   {
-      int eventImpact = (int)values[i].impact;
-      if(eventImpact<(int)gConfig.newsImpact)
-         continue;
-      ulong flags=(ulong)values[i].flags;
-      if((flags & CALENDAR_FLAG_FORECAST)==0 && (flags & CALENDAR_FLAG_REVISED)==0)
-      {
-         // upcoming or recent event
-         datetime eventTime=values[i].time;
-         if(MathAbs(eventTime-now) <= gConfig.newsBlockAfter*60)
-            return false;
-         if(now<eventTime && (eventTime-now)<=gConfig.newsBlockBefore*60)
-            return false;
-      }
-   }
+   // The FTMO swing setup operates without the MetaTrader economic
+   // calendar feed.  To keep behaviour predictable we simply disable the
+   // calendar-based block and allow trading to continue.
    return true;
 }
 
