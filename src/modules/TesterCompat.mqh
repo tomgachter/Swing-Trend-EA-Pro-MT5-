@@ -1,11 +1,10 @@
-#pragma once
-
-#ifdef __MQL5__
-// On MetaTrader 5 the ENUM_STATISTICS type and associated constants are
-// provided by the platform. Import the official definitions so the EA relies
-// on the same source of truth and avoids conflicting redeclarations.
-#include <Testing/Tester.mqh>
-#endif
+//+------------------------------------------------------------------+
+//| TesterCompat.mqh                                                 |
+//| Compatibility helpers for tester statistics in constrained       |
+//| environments.                                                    |
+//+------------------------------------------------------------------+
+#ifndef TESTERCOMPAT_MQH
+#define TESTERCOMPAT_MQH
 
 // Some build environments (for example when running static analysis tools or
 // when using lightweight MetaTrader installations) might not ship the tester
@@ -65,3 +64,5 @@ enum ENUM_STATISTICS
 };
 
 #endif  // STAT_PROFIT_FACTOR
+
+#endif  // TESTERCOMPAT_MQH
