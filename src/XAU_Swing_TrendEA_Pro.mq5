@@ -8,8 +8,8 @@
 #include "modules/EAGlobals.mqh"
 #undef EA_GLOBALS_IMPLEMENTATION
 
-#include "modules\\MarketUtils.mqh"
-#include "modules\\TradeManagement.mqh"
+#include "modules/MarketUtils.mqh"
+#include "modules/TradeManagement.mqh"
 
 int OnInit()
 {
