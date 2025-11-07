@@ -1,6 +1,17 @@
 #ifndef __EA_TESTER_COMPAT_MQH__
 #define __EA_TESTER_COMPAT_MQH__
 
+#if defined(__MQL5__)
+// On MetaTrader 5 the ENUM_STATISTICS type and associated constants are
+// provided by the platform. Import the official definitions so the EA relies
+// on the same source of truth and avoids conflicting redeclarations.
+#include <Testing/Tester.mqh>
+#elif defined(__MQL4__)
+
+// MetaTrader 4 does not expose the tester statistics enumeration, so we
+// replicate the constants locally to keep the EA portable when compiled for
+// legacy environments or during offline static analysis.
+
 // Fallback definitions for ENUM_STATISTICS constants normally provided by
 // <Testing/Tester.mqh>. These values mirror the order documented in the
 // MQL5 reference so that TesterStatistics() continues to return the same
@@ -51,5 +62,7 @@ enum ENUM_STATISTICS
    STAT_COMPLEX_CRITERION      = 41,
    STAT_MODELLING_QUALITY      = 42
 };
+
+#endif  // defined(__MQL5__) || defined(__MQL4__)
 
 #endif // __EA_TESTER_COMPAT_MQH__
