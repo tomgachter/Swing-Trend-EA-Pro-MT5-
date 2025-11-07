@@ -1,7 +1,7 @@
 #ifndef __EA_GLOBALS_MQH__
 #define __EA_GLOBALS_MQH__
 
-#include <Trade/Trade.mqh>
+#include "TradeCompat.mqh"
 
 enum EntryMode
 {
@@ -138,6 +138,6 @@ int                 hEMA_T3               = INVALID_HANDLE;
 int                 hADX_H4               = INVALID_HANDLE;
 int                 hFractals             = INVALID_HANDLE;
 
-CTrade              trade;
+EA_Trade            trade;
 
 #endif // __EA_GLOBALS_MQH__

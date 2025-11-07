@@ -241,7 +241,7 @@ void ReportTesterDiagnostics(void)
    if(!MQLInfoInteger(MQL_TESTER))
       return;
 
-   double quality = TesterStatistics((ENUM_STATISTICS)STAT_MODELLING_QUALITY);
+   double quality = TesterStatistics(STAT_MODELLING_QUALITY);
    if(quality<=0.0)
    {
       Print("Tester: modelling quality information is unavailable.");
