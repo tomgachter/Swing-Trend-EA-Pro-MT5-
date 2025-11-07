@@ -4,6 +4,8 @@
 //+------------------------------------------------------------------+
 #property strict
 
+#include <Testing\Tester.mqh>
+
 #include "modules/EAGlobals.mqh"
 #include "modules/MarketUtils.mqh"
 #include "modules/TradeManagement.mqh"
