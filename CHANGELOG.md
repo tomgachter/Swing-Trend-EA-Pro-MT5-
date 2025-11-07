@@ -13,6 +13,7 @@
 - Refactored parameter access to flow through `EAConfig` for preset-aware runtime configuration.
 - Revised tester score in `OnTester` to use `ProfitFactor * Sharpe / (1 + MaxDD%)` with trade-count guard.
 - Enhanced slope filter to use ATR-normalised EMA gradients with configurable minimum slope.
+- Disabled the economic calendar filter by default so swing accounts continue trading even without calendar data.
 
 ### Fixed
 - Ensured position handling and memo lifecycle stay consistent even under external closes (SL/TP), preserving statistics and risk state.
