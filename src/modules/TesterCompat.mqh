@@ -10,7 +10,14 @@
 // when using lightweight MetaTrader installations) might not ship the tester
 // header.  Guard the fallback enumeration so that we only provide it when the
 // platform has not already defined the constants.
-#ifndef STAT_PROFIT_FACTOR
+
+// Native MQL5 builds already provide TesterStatistics() identifiers, so avoid
+// redefining them when that environment is detected.
+#if defined(__MQL5__)
+   #define TESTERCOMPAT_HAS_NATIVE_STATISTICS 1
+#endif
+
+#ifndef TESTERCOMPAT_HAS_NATIVE_STATISTICS
 
 // Fallback definitions for ENUM_STATISTICS constants normally provided by
 // <Testing/Tester.mqh>. These values mirror the order documented in the
@@ -63,6 +70,6 @@ enum ENUM_STATISTICS
    STAT_MODELLING_QUALITY      = 42
 };
 
-#endif  // STAT_PROFIT_FACTOR
+#endif  // TESTERCOMPAT_HAS_NATIVE_STATISTICS
 
 #endif  // TESTERCOMPAT_MQH
