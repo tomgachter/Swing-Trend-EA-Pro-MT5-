@@ -9,6 +9,7 @@
 - News and session resilience, including equity-underwater pause, slippage retries, and Donchian mapping tied to D1 ATR regime.
 
 ### Changed
+- Relaxed the default XAUUSD swing presets to favour more trade frequency (hybrid entry, lighter trend votes/slope/ADX, wider Donchian, shorter cooldown, looser session bias and extension guard).
 - Updated all default inputs directly in code to match the requested optimisation values and comments documenting `XAUUSD H1` defaults.
 - Refactored parameter access to flow through `EAConfig` for preset-aware runtime configuration.
 - Revised tester score in `OnTester` to use `ProfitFactor * Sharpe / (1 + MaxDD%)` with trade-count guard.
