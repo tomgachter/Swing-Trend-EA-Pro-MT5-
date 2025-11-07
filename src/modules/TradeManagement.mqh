@@ -210,6 +210,9 @@ void ManagePosition(void)
       return;
 
    ulong ticket=(ulong)PositionGetInteger(POSITION_TICKET);
+   long type=PositionGetInteger(POSITION_TYPE);
+   double openPrice=PositionGetDouble(POSITION_PRICE_OPEN);
+   int memoIndex=FindMemoIndex(ticket);
 
    if(FridayFlatWindow())
    {
@@ -253,13 +256,10 @@ void ManagePosition(void)
 
    double atrPts=atr/point;
 
-   long type=PositionGetInteger(POSITION_TYPE);
    double curSL=PositionGetDouble(POSITION_SL);
    double curTP=PositionGetDouble(POSITION_TP);
-   double openPrice=PositionGetDouble(POSITION_PRICE_OPEN);
    double volume=PositionGetDouble(POSITION_VOLUME);
 
-   int memoIndex=FindMemoIndex(ticket);
    if(memoIndex<0)
       UpsertMemo(ticket,MathAbs(openPrice-curSL)/point,atrPts,lastBarTime,false,openPrice,(type==POSITION_TYPE_BUY?1:-1));
 

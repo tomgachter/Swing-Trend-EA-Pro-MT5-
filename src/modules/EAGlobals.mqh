@@ -1,6 +1,7 @@
 #ifndef __EA_GLOBALS_MQH__
 #define __EA_GLOBALS_MQH__
 
+#include <Calendar.mqh>
 #include "TradeCompat.mqh"
 
 enum EntryMode
@@ -261,19 +262,6 @@ struct TradeSnapshot
 TradeSnapshot       completedTrades[];
 
 //+------------------------------------------------------------------+
-//| Preset utilities                                                 |
-//+------------------------------------------------------------------+
-void ApplyPreset(const InpPreset preset);
-void LoadInputsIntoConfig(EAConfig &settings);
-void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset);
-int  ParseTimeToMinutes(const string hhmm);
-int  FindMemoIndex(const ulong ticket);
-void UpsertMemo(const ulong ticket,const double riskPts,const double atrPts,const datetime openTime,const bool isAddon,const double openPrice,const int direction);
-void RemoveMemo(const ulong ticket);
-void RecordCompletedTrade(const PositionMemo &memo,const double profitPts);
-void UpdateMemoExcursions(const int memoIndex,const double progressPts);
-
-//+------------------------------------------------------------------+
 //| Indicator handles                                                |
 //+------------------------------------------------------------------+
 int                 hATR_H4               = INVALID_HANDLE;
@@ -291,6 +279,20 @@ EA_Trade            trade;
 //+------------------------------------------------------------------+
 //| Preset helpers implementation                                    |
 //+------------------------------------------------------------------+
+int ParseTimeToMinutes(const string hhmm)
+{
+   string parts[];
+   int cnt=StringSplit(hhmm,':',parts);
+   if(cnt<2)
+      return 20*60+30; // default 20:30
+   int h=(int)StringToInteger(parts[0]);
+   int m=(int)StringToInteger(parts[1]);
+   h= MathMax(0,MathMin(23,h));
+   m= MathMax(0,MathMin(59,m));
+   return h*60+m;
+}
+
+
 void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
 {
    // Shared defaults that may still leverage user supplied symbol/magic/debug values.
@@ -524,19 +526,6 @@ void ApplyPreset(const InpPreset preset)
    ApplyPresetDefaults(gConfig,preset);
    if(preset==PRESET_CUSTOM)
       LoadInputsIntoConfig(gConfig);
-}
-
-int ParseTimeToMinutes(const string hhmm)
-{
-   string parts[];
-   int cnt=StringSplit(hhmm,':',parts);
-   if(cnt<2)
-      return 20*60+30; // default 20:30
-   int h=(int)StringToInteger(parts[0]);
-   int m=(int)StringToInteger(parts[1]);
-   h= MathMax(0,MathMin(23,h));
-   m= MathMax(0,MathMin(59,m));
-   return h*60+m;
 }
 
 int FindMemoIndex(const ulong ticket)

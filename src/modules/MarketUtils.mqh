@@ -392,9 +392,10 @@ bool NewsFilterOk(void)
 
    for(int i=0;i<copied;++i)
    {
-      if(values[i].impact<gConfig.newsImpact)
+      int eventImpact = (int)values[i].impact;
+      if(eventImpact<(int)gConfig.newsImpact)
          continue;
-      long flags=values[i].flags;
+      ulong flags=(ulong)values[i].flags;
       if((flags & CALENDAR_FLAG_FORECAST)==0 && (flags & CALENDAR_FLAG_REVISED)==0)
       {
          // upcoming or recent event
