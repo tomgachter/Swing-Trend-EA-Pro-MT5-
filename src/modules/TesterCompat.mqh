@@ -1,16 +1,17 @@
-#ifndef __EA_TESTER_COMPAT_MQH__
-#define __EA_TESTER_COMPAT_MQH__
+#pragma once
 
 #ifdef __MQL5__
 // On MetaTrader 5 the ENUM_STATISTICS type and associated constants are
 // provided by the platform. Import the official definitions so the EA relies
 // on the same source of truth and avoids conflicting redeclarations.
-#include <Testing\Tester.mqh>
-#else
+#include <Testing/Tester.mqh>
+#endif
 
-// MetaTrader 4 does not expose the tester statistics enumeration, so we
-// replicate the constants locally to keep the EA portable when compiled for
-// legacy environments or during offline static analysis.
+// Some build environments (for example when running static analysis tools or
+// when using lightweight MetaTrader installations) might not ship the tester
+// header.  Guard the fallback enumeration so that we only provide it when the
+// platform has not already defined the constants.
+#ifndef STAT_PROFIT_FACTOR
 
 // Fallback definitions for ENUM_STATISTICS constants normally provided by
 // <Testing/Tester.mqh>. These values mirror the order documented in the
@@ -63,6 +64,4 @@ enum ENUM_STATISTICS
    STAT_MODELLING_QUALITY      = 42
 };
 
-#endif  // __MQL5__
-
-#endif // __EA_TESTER_COMPAT_MQH__
+#endif  // STAT_PROFIT_FACTOR
