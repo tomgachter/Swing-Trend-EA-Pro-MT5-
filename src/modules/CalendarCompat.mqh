@@ -13,6 +13,15 @@
 //| header is missing define EA_FORCE_STUB_CALENDAR before including  |
 //| this file to activate the lightweight compatibility layer.        |
 //+------------------------------------------------------------------+
+#if !defined(EA_USE_NATIVE_CALENDAR)
+   // When the native calendar header is unavailable (for example in
+   // stripped-down CI environments) we fall back to the lightweight stub
+   // implementation.  Users compiling inside MetaTrader can opt back into
+   // the official API by defining EA_USE_NATIVE_CALENDAR before including
+   // this file.
+   #define EA_FORCE_STUB_CALENDAR
+#endif
+
 #ifdef EA_FORCE_STUB_CALENDAR
 
 // Minimal importance enumeration used by the inputs/configuration.
