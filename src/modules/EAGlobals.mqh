@@ -111,7 +111,7 @@ input string            InpFridayFlatTime     = "20:30";                 // Defa
 
 //--- News filter
 input bool              InpUseNewsFilter      = true;                    // Default (XAUUSD, H1): enable economic news filter
-input ENUM_CALENDAR_EVENT_IMPORTANCE InpNewsImpact = CALENDAR_IMPORTANCE_HIGH; // Default (XAUUSD, H1): filtered news impact
+input EACalendarEventImportance InpNewsImpact = EA_CALENDAR_IMPORTANCE_HIGH; // Default (XAUUSD, H1): filtered news impact
 input int               InpNewsBlockMinutesBefore = 30;                  // Default (XAUUSD, H1): minutes before news to block
 input int               InpNewsBlockMinutesAfter  = 30;                  // Default (XAUUSD, H1): minutes after news to block
 
@@ -198,7 +198,7 @@ struct EAConfig
    bool              flatOnFriday;
    int               fridayFlatMinutes;
    bool              useNewsFilter;
-   ENUM_CALENDAR_EVENT_IMPORTANCE newsImpact;
+   EACalendarEventImportance newsImpact;
    int               newsBlockBefore;
    int               newsBlockAfter;
    bool              allowPyramiding;

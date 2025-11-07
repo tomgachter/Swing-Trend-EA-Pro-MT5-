@@ -18,16 +18,16 @@
    #include <Calendar.mqh>
 #endif
 
-// Minimal importance enumeration used by the inputs/configuration.
-#ifndef ENUM_CALENDAR_EVENT_IMPORTANCE
-enum ENUM_CALENDAR_EVENT_IMPORTANCE
+// Minimal importance enumeration used by the inputs/configuration.  The
+// enumerator names are namespaced to avoid clashes with the built-in
+// MetaTrader types which are now provided by default in recent builds.
+enum EACalendarEventImportance
 {
-   CALENDAR_IMPORTANCE_NONE   = 0,
-   CALENDAR_IMPORTANCE_LOW    = 1,
-   CALENDAR_IMPORTANCE_MEDIUM = 2,
-   CALENDAR_IMPORTANCE_HIGH   = 3
+   EA_CALENDAR_IMPORTANCE_NONE   = 0,
+   EA_CALENDAR_IMPORTANCE_LOW    = 1,
+   EA_CALENDAR_IMPORTANCE_MEDIUM = 2,
+   EA_CALENDAR_IMPORTANCE_HIGH   = 3
 };
-#endif
 
 // Flags consumed by the Expert Advisor when vetting events.  If the
 // native header is available these macros are already defined.
