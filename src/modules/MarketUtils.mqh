@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __EA_MARKET_UTILS_MQH__
+#define __EA_MARKET_UTILS_MQH__
 
 #include "EAGlobals.mqh"
 
@@ -341,4 +342,6 @@ int OpenPositionsByMagic(void)
    }
    return count;
 }
+
+#endif // __EA_MARKET_UTILS_MQH__
 
