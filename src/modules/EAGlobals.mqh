@@ -110,7 +110,7 @@ input bool              InpFlatOnFriday       = true;                    // Defa
 input string            InpFridayFlatTime     = "20:30";                 // Default (XAUUSD, H1): Friday flat time (HH:MM)
 
 //--- News filter
-input bool              InpUseNewsFilter      = true;                    // Default (XAUUSD, H1): enable economic news filter
+input bool              InpUseNewsFilter      = false;                   // Default (XAUUSD, H1): disable economic news filter for swing trading
 input EACalendarEventImportance InpNewsImpact = EA_CALENDAR_IMPORTANCE_HIGH; // Default (XAUUSD, H1): filtered news impact
 input int               InpNewsBlockMinutesBefore = 30;                  // Default (XAUUSD, H1): minutes before news to block
 input int               InpNewsBlockMinutesAfter  = 30;                  // Default (XAUUSD, H1): minutes after news to block
@@ -353,7 +353,7 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.sess2EndHour        = 20;
          settings.flatOnFriday        = true;
          settings.fridayFlatMinutes   = ParseTimeToMinutes(InpFridayFlatTime);
-         settings.useNewsFilter       = true;
+         settings.useNewsFilter       = InpUseNewsFilter;
          settings.newsImpact          = InpNewsImpact;
          settings.newsBlockBefore     = InpNewsBlockMinutesBefore;
          settings.newsBlockAfter      = InpNewsBlockMinutesAfter;
