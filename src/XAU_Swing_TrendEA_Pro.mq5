@@ -4,7 +4,7 @@
 //+------------------------------------------------------------------+
 #property strict
 
-#include <Testing\Tester.mqh>
+#include "modules/TesterCompat.mqh"
 
 #include "modules/EAGlobals.mqh"
 #include "modules/MarketUtils.mqh"
