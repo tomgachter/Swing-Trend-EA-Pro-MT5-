@@ -12,23 +12,24 @@
 
 int OnInit()
 {
-   trade.SetExpertMagicNumber(InpMagic);
+   ApplyPreset(InpPresetSelection);
+   trade.SetExpertMagicNumber(gConfig.magic);
 
-   if(!SymbolSelect(InpSymbol,true))
+   if(!SymbolSelect(gConfig.symbol,true))
    {
       PrintDebug("Symbol selection failed");
       return INIT_FAILED;
    }
 
-   hATR_H4   = iATR(InpSymbol,InpTF_TrailATR,InpATR_Period);
-   hATR_D1   = iATR(InpSymbol,PERIOD_D1,InpATR_D1_Period);
-   hATR_Entry= iATR(InpSymbol,InpTF_Entry,14);
-   hEMA_E    = iMA (InpSymbol,InpTF_Entry, InpEMA_Entry_Period,0,MODE_EMA,PRICE_CLOSE);
-   hEMA_T1   = iMA (InpSymbol,InpTF_Trend1,InpEMA_Trend1_Period,0,MODE_EMA,PRICE_CLOSE);
-   hEMA_T2   = iMA (InpSymbol,InpTF_Trend2,InpEMA_Trend2_Period,0,MODE_EMA,PRICE_CLOSE);
-   hEMA_T3   = iMA (InpSymbol,InpTF_Trend3,InpEMA_Trend3_Period,0,MODE_EMA,PRICE_CLOSE);
-   hADX_H4   = iADX(InpSymbol,InpTF_Trend1,InpADX_Period);
-   hFractals = iFractals(InpSymbol,InpTF_Entry);
+   hATR_H4   = iATR(gConfig.symbol,gConfig.tfTrailAtr,gConfig.atrPeriod);
+   hATR_D1   = iATR(gConfig.symbol,PERIOD_D1,gConfig.atrD1Period);
+   hATR_Entry= iATR(gConfig.symbol,gConfig.tfEntry,14);
+   hEMA_E    = iMA (gConfig.symbol,gConfig.tfEntry, gConfig.emaEntryPeriod,0,MODE_EMA,PRICE_CLOSE);
+   hEMA_T1   = iMA (gConfig.symbol,gConfig.tfTrend1,gConfig.emaTrend1Period,0,MODE_EMA,PRICE_CLOSE);
+   hEMA_T2   = iMA (gConfig.symbol,gConfig.tfTrend2,gConfig.emaTrend2Period,0,MODE_EMA,PRICE_CLOSE);
+   hEMA_T3   = iMA (gConfig.symbol,gConfig.tfTrend3,gConfig.emaTrend3Period,0,MODE_EMA,PRICE_CLOSE);
+   hADX_H4   = iADX(gConfig.symbol,gConfig.tfTrend1,gConfig.adxPeriod);
+   hFractals = iFractals(gConfig.symbol,gConfig.tfEntry);
 
    int handles[]={hATR_H4,hATR_D1,hATR_Entry,hEMA_E,hEMA_T1,hEMA_T2,hEMA_T3,hADX_H4,hFractals};
    const string names[] = {"ATR_H4","ATR_D1","ATR_Entry","EMA_Entry","EMA_T1","EMA_T2","EMA_T3","ADX_H4","Fractals"};
@@ -44,6 +45,7 @@ int OnInit()
    ResetDailyAnchors();
    equityPeak = AccountInfoDouble(ACCOUNT_EQUITY);
    eqEMA      = equityPeak;
+   lastValidAtrD1Pts = gConfig.atrD1Pivot;
 
    PrintDebug("XAU_Swing_TrendEA_Pro initialised");
    return INIT_SUCCEEDED;
@@ -57,6 +59,7 @@ void OnDeinit(const int reason)
       if(handles[i]!=INVALID_HANDLE)
          IndicatorRelease(handles[i]);
    }
+   ReportTradeCorrelations();
 }
 
 void OnTick()
@@ -65,16 +68,16 @@ void OnTick()
    if(equity>equityPeak)
       equityPeak=equity;
 
-   if(InpUseEquityFilter)
+   if(gConfig.useEquityFilter)
    {
-      double a=MathMax(0.0,MathMin(1.0,InpEqEMA_Alpha));
+      double a=MathMax(0.0,MathMin(1.0,gConfig.eqEmaAlpha));
       if(eqEMA<=0.0)
          eqEMA=equity;
       else
          eqEMA = a*equity + (1.0-a)*eqEMA;
    }
 
-   if(!IsNewBar(InpTF_Entry))
+   if(!IsNewBar(gConfig.tfEntry))
    {
       ManagePosition();
       return;
@@ -85,9 +88,21 @@ void OnTick()
 
    ManagePosition();
 
-   if(InpUseSessionBias && !SessionOk())
+   if(gConfig.useSessionBias && !SessionOk())
    {
       PrintDebug("Gate: session bias");
+      return;
+   }
+
+   if(!NewsFilterOk())
+   {
+      PrintDebug("Gate: news filter");
+      return;
+   }
+
+   if(FridayFlatWindow())
+   {
+      PrintDebug("Gate: Friday flat window");
       return;
    }
 
@@ -105,7 +120,7 @@ void OnTick()
       return;
    }
 
-   if(InpUseEquityFilter && !EquityFilterOk())
+   if(gConfig.useEquityFilter && !EquityFilterOk())
    {
       PrintDebug("Gate: equity filter");
       return;
@@ -132,7 +147,13 @@ void OnTick()
       return;
    }
 
-   if(InpUseSlopeFilter && !SlopeOkRelaxed(hEMA_E,InpUseClosedBarTrend?1:0,dir,adx))
+   if(!HTFConfirmOk(dir))
+   {
+      PrintDebug("Gate: HTF confirm");
+      return;
+   }
+
+   if(gConfig.useSlopeFilter && !SlopeOkRelaxed(hEMA_E,gConfig.useClosedBarTrend?1:0,dir,adx))
    {
       PrintDebug("Gate: slope");
       return;
@@ -151,7 +172,7 @@ void OnTick()
       return;
    }
 
-   if(OpenPositionsByMagic()>=InpMaxOpenPositions)
+   if(OpenPositionsByMagic()>=gConfig.maxOpenPositions)
    {
       PrintDebug("Gate: max positions");
       return;
@@ -172,11 +193,11 @@ void OnTick()
    bool trigger=false;
    ENUM_ORDER_TYPE orderType = (dir>0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
 
-   if(InpEntryMode==ENTRY_PULLBACK)
+   if(gConfig.entryMode==ENTRY_PULLBACK)
    {
       double ema1,ema2,c1,c2;
       if(!CopyAt(hEMA_E,0,1,ema1,"EMA entry") || !CopyAt(hEMA_E,0,2,ema2,"EMA entry") ||
-         !CopyCloseAt(InpSymbol,InpTF_Entry,1,c1,"Close pullback") || !CopyCloseAt(InpSymbol,InpTF_Entry,2,c2,"Close pullback"))
+         !CopyCloseAt(gConfig.symbol,gConfig.tfEntry,1,c1,"Close pullback") || !CopyCloseAt(gConfig.symbol,gConfig.tfEntry,2,c2,"Close pullback"))
          return;
 
       if(dir>0 && c2<ema2 && c1>ema1)
@@ -184,25 +205,25 @@ void OnTick()
       if(dir<0 && c2>ema2 && c1<ema1)
          trigger=true;
    }
-   else if(InpEntryMode==ENTRY_BREAKOUT || InpEntryMode==ENTRY_HYBRID)
+   else if(gConfig.entryMode==ENTRY_BREAKOUT || gConfig.entryMode==ENTRY_HYBRID)
    {
       double hi,lo;
-      if(!DonchianHL(InpSymbol,InpTF_Entry,MathMax(2,donBars),hi,lo))
+      if(!DonchianHL(gConfig.symbol,gConfig.tfEntry,MathMax(2,donBars),hi,lo))
          return;
 
-      double buyTrig  = hi + InpBreakoutBufferPts*pt;
-      double sellTrig = lo - InpBreakoutBufferPts*pt;
+      double buyTrig  = hi + gConfig.breakoutBufferPts*pt;
+      double sellTrig = lo - gConfig.breakoutBufferPts*pt;
 
       if(dir>0 && ask>buyTrig)
          trigger=true;
       if(dir<0 && bid<sellTrig)
          trigger=true;
 
-      if(!trigger && InpEntryMode==ENTRY_HYBRID)
+      if(!trigger && gConfig.entryMode==ENTRY_HYBRID)
       {
          double ema1,ema2,c1,c2;
          if(CopyAt(hEMA_E,0,1,ema1,"EMA hybrid") && CopyAt(hEMA_E,0,2,ema2,"EMA hybrid") &&
-            CopyCloseAt(InpSymbol,InpTF_Entry,1,c1,"Close hybrid") && CopyCloseAt(InpSymbol,InpTF_Entry,2,c2,"Close hybrid"))
+            CopyCloseAt(gConfig.symbol,gConfig.tfEntry,1,c1,"Close hybrid") && CopyCloseAt(gConfig.symbol,gConfig.tfEntry,2,c2,"Close hybrid"))
          {
             if(dir>0 && c2<ema2 && c1>ema1)
                trigger=true;
@@ -224,16 +245,18 @@ double OnTester()
    double pf      = (double)TesterStatistics(STAT_PROFIT_FACTOR);
    double eqdd    = (double)TesterStatistics(STAT_EQUITY_DDREL_PERCENT);
    double trades  = (double)TesterStatistics(STAT_TRADES);
-   if(pf<=0.0 || trades<40.0)
-      return -1.0;
-   double ddPenalty = MathMax(0.3,1.0-(eqdd/10.0));
-   double sizeBonus = MathMin(MathSqrt(trades/60.0),1.25);
-   return pf*ddPenalty*sizeBonus;
+   double sharpe  = (double)TesterStatistics(STAT_SHARPE_RATIO);
+   if(pf<=0.0 || trades<60.0)
+      return -DBL_MAX;
+   if(eqdd<=0.0)
+      eqdd=0.01;
+   return pf*MathMax(0.0,sharpe)/(1.0+eqdd);
 }
 
 void OnTesterDeinit()
 {
    ReportTesterDiagnostics();
+   ReportTradeCorrelations();
 }
 
 void ReportTesterDiagnostics(void)
@@ -254,5 +277,59 @@ void ReportTesterDiagnostics(void)
       const string modellingMsg = "Tester: modelling quality is very low. Download higher quality tick history in the MT5 History Center and re-run using 'Every tick based on real ticks' for reliable results.";
       Print(modellingMsg);
    }
+}
+
+void ReportTradeCorrelations(void)
+{
+   int total=ArraySize(completedTrades);
+   if(total<5)
+   {
+      Print("Stats: insufficient closed trades for MFE/MAE regression.");
+      return;
+   }
+
+   double sumProfit=0.0,sumProfit2=0.0;
+   double sumMfe=0.0,sumMfe2=0.0,sumProfitMfe=0.0;
+   double sumMae=0.0,sumMae2=0.0,sumProfitMae=0.0;
+
+   for(int i=0;i<total;++i)
+   {
+      double risk = (completedTrades[i].initialRiskPts>1e-9 ? completedTrades[i].initialRiskPts : 1.0);
+      double profitR = completedTrades[i].profitPts/risk;
+      double mfeR    = completedTrades[i].mfePts/risk;
+      double maeR    = completedTrades[i].maePts/risk;
+
+      sumProfit+=profitR;
+      sumProfit2+=profitR*profitR;
+      sumMfe+=mfeR;
+      sumMfe2+=mfeR*mfeR;
+      sumProfitMfe+=profitR*mfeR;
+      sumMae+=maeR;
+      sumMae2+=maeR*maeR;
+      sumProfitMae+=profitR*maeR;
+   }
+
+   double n = (double)total;
+   double varProfit = (sumProfit2 - (sumProfit*sumProfit)/n)/MathMax(n-1.0,1.0);
+   double varMfe    = (sumMfe2 - (sumMfe*sumMfe)/n)/MathMax(n-1.0,1.0);
+   double varMae    = (sumMae2 - (sumMae*sumMae)/n)/MathMax(n-1.0,1.0);
+   double covMfe    = (sumProfitMfe - (sumProfit*sumMfe)/n)/MathMax(n-1.0,1.0);
+   double covMae    = (sumProfitMae - (sumProfit*sumMae)/n)/MathMax(n-1.0,1.0);
+
+   double slopeMfe = (varMfe>1e-9 ? covMfe/varMfe : 0.0);
+   double slopeMae = (varMae>1e-9 ? covMae/varMae : 0.0);
+
+   double corrMfe = 0.0;
+   if(varProfit>1e-9 && varMfe>1e-9)
+      corrMfe = covMfe/MathSqrt(varProfit*varMfe);
+   double corrMae = 0.0;
+   if(varProfit>1e-9 && varMae>1e-9)
+      corrMae = covMae/MathSqrt(varProfit*varMae);
+
+   double r2Mfe = corrMfe*corrMfe;
+   double r2Mae = corrMae*corrMae;
+
+   PrintFormat("Stats: MFE vs Profit slope=%.3f R^2=%.3f | MAE vs Profit slope=%.3f R^2=%.3f (n=%d)",
+               slopeMfe,r2Mfe,slopeMae,r2Mae,total);
 }
 //+------------------------------------------------------------------+

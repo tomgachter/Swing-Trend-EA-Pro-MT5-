@@ -5,24 +5,24 @@
 
 void PrintDebug(const string text)
 {
-   if(InpDebug)
+   if(gConfig.debug)
       Print(text);
 }
 
 bool GetSymbolDouble(const ENUM_SYMBOL_INFO_DOUBLE prop,double &value,const string tag)
 {
-   if(SymbolInfoDouble(InpSymbol,prop,value))
+   if(SymbolInfoDouble(gConfig.symbol,prop,value))
       return true;
-   if(InpDebug)
+   if(gConfig.debug)
       PrintFormat("SymbolInfoDouble failed [%s] prop=%d err=%d",tag,(int)prop,_LastError);
    return false;
 }
 
 bool GetSymbolInteger(const ENUM_SYMBOL_INFO_INTEGER prop,long &value,const string tag)
 {
-   if(SymbolInfoInteger(InpSymbol,prop,value))
+   if(SymbolInfoInteger(gConfig.symbol,prop,value))
       return true;
-   if(InpDebug)
+   if(gConfig.debug)
       PrintFormat("SymbolInfoInteger failed [%s] prop=%d err=%d",tag,(int)prop,_LastError);
    return false;
 }
@@ -63,7 +63,7 @@ bool IsNewBar(const ENUM_TIMEFRAMES tf)
 {
    MqlRates rates[];
    ArraySetAsSeries(rates,true);
-   if(CopyRates(InpSymbol,tf,0,2,rates)<2)
+   if(CopyRates(gConfig.symbol,tf,0,2,rates)<2)
    {
       PrintDebug("CopyRates failed in IsNewBar");
       return false;
@@ -89,7 +89,7 @@ bool CopyAt(const int handle,const int buffer,const int shift,double &value,cons
    int copied=CopyBuffer(handle,buffer,shift,1,data);
    if(copied!=1)
    {
-      if(InpDebug)
+      if(gConfig.debug)
          PrintFormat("CopyBuffer failed [%s] handle=%d buf=%d shift=%d err=%d",tag,handle,buffer,shift,_LastError);
       return false;
    }
@@ -105,7 +105,7 @@ bool CopyCloseAt(const string symbol,const ENUM_TIMEFRAMES tf,const int shift,do
    int copied=CopyClose(symbol,tf,shift,1,closes);
    if(copied!=1)
    {
-      if(InpDebug)
+      if(gConfig.debug)
          PrintFormat("CopyClose failed [%s] shift=%d err=%d",tag,shift,_LastError);
       return false;
    }
@@ -119,8 +119,19 @@ bool SpreadOK(int &spread)
    long raw=0;
    if(!GetSymbolInteger(SYMBOL_SPREAD,raw,"spread"))
       return false;
+   long isFloat=0;
+   GetSymbolInteger(SYMBOL_SPREAD_FLOAT,isFloat,"spread_float");
    spread=(int)raw;
-   return (spread<=InpMaxSpreadPoints);
+   if(isFloat!=0)
+   {
+      double bid=0.0,ask=0.0,point=0.0;
+      if(GetBidAsk(bid,ask) && GetSymbolDouble(SYMBOL_POINT,point,"point"))
+      {
+         double floatSpread=(ask-bid)/point;
+         spread=(int)MathRound(floatSpread);
+      }
+   }
+   return (spread<=gConfig.maxSpreadPoints);
 }
 
 bool RiskOK(double &dayLoss,double &dd)
@@ -134,9 +145,9 @@ bool RiskOK(double &dayLoss,double &dd)
    dayLoss = 100.0*(dayStartEquity-equity)/MathMax(1.0,dayStartEquity);
    dd      = 100.0*(equityPeak-equity)/MathMax(1.0,equityPeak);
 
-   if(dayLoss>=InpMaxDailyLossPct)
+   if(dayLoss>=gConfig.dailyLossStopPct)
       return false;
-   if(dd>=InpMaxDrawdownPct)
+   if(dd>=gConfig.maxDrawdownPct)
       return false;
    return true;
 }
@@ -152,7 +163,7 @@ bool RegimeOK(double &atrD1pts)
       return false;
 
    double currentAtrD1pts = atr/point;
-   if(currentAtrD1pts<InpATR_D1_MinPts || currentAtrD1pts>InpATR_D1_MaxPts)
+   if(currentAtrD1pts<gConfig.atrD1MinPts || currentAtrD1pts>gConfig.atrD1MaxPts)
       return false;
 
    atrD1pts = currentAtrD1pts;
@@ -167,7 +178,7 @@ bool ADX_OK(double &adxOut)
    adxOut=0.0;
    if(!CopyAt(hADX_H4,0,1,adxOut,"ADX"))
       return false;
-   return (adxOut>=InpMinADX_H4);
+   return (adxOut>=gConfig.minAdxH4);
 }
 
 bool DonchianHL(const string symbol,const ENUM_TIMEFRAMES tf,const int bars,double &hi,double &lo)
@@ -182,7 +193,7 @@ bool DonchianHL(const string symbol,const ENUM_TIMEFRAMES tf,const int bars,doub
    int copied=CopyRates(symbol,tf,1,bars,rates);
    if(copied<bars)
    {
-      if(InpDebug)
+      if(gConfig.debug)
          PrintFormat("CopyRates failed for Donchian bars=%d got=%d err=%d",bars,copied,_LastError);
       return false;
    }
@@ -201,21 +212,21 @@ bool DonchianHL(const string symbol,const ENUM_TIMEFRAMES tf,const int bars,doub
 
 int TrendDirection(void)
 {
-   int shift=InpUseClosedBarTrend?1:0;
+   int shift=gConfig.useClosedBarTrend?1:0;
    double ma1,ma2,ma3,p1,p2,p3;
    if(!CopyAt(hEMA_T1,0,shift,ma1,"EMA trend1")) return 0;
    if(!CopyAt(hEMA_T2,0,shift,ma2,"EMA trend2")) return 0;
    if(!CopyAt(hEMA_T3,0,shift,ma3,"EMA trend3")) return 0;
-   if(!CopyCloseAt(InpSymbol,InpTF_Trend1,shift,p1,"Close trend1")) return 0;
-   if(!CopyCloseAt(InpSymbol,InpTF_Trend2,shift,p2,"Close trend2")) return 0;
-   if(!CopyCloseAt(InpSymbol,InpTF_Trend3,shift,p3,"Close trend3")) return 0;
+    if(!CopyCloseAt(gConfig.symbol,gConfig.tfTrend1,shift,p1,"Close trend1")) return 0;
+    if(!CopyCloseAt(gConfig.symbol,gConfig.tfTrend2,shift,p2,"Close trend2")) return 0;
+    if(!CopyCloseAt(gConfig.symbol,gConfig.tfTrend3,shift,p3,"Close trend3")) return 0;
 
    int up=0,down=0;
    if(p1>ma1) up++; else if(p1<ma1) down++;
    if(p2>ma2) up++; else if(p2<ma2) down++;
    if(p3>ma3) up++; else if(p3<ma3) down++;
 
-   int need=MathMax(1,MathMin(3,InpTrendVotesRequired));
+   int need=MathMax(1,MathMin(3,gConfig.trendVotesRequired));
    if(up>=need && down<need)
       return +1;
    if(down>=need && up<need)
@@ -225,18 +236,24 @@ int TrendDirection(void)
 
 bool SlopeOkRelaxed(const int handle,const int shift,const int dir,const double adxH4)
 {
-   if(!InpUseSlopeFilter)
+   if(!gConfig.useSlopeFilter)
       return true;
 
-   double a,b;
-   if(!CopyAt(handle,0,shift,a,"Slope a") || !CopyAt(handle,0,shift+1,b,"Slope b"))
+   double emaNow,emaPrev;
+   if(!CopyAt(handle,0,shift,emaNow,"Slope a") || !CopyAt(handle,0,shift+1,emaPrev,"Slope b"))
       return false;
 
-   double slope=a-b;
-   if(dir>0 && slope<=0.0)
-      return (adxH4>=25.0);
-   if(dir<0 && slope>=0.0)
-      return (adxH4>=25.0);
+   double point=0.0,atr=0.0;
+   if(!GetSymbolDouble(SYMBOL_POINT,point,"point") || point<=0.0)
+      return true;
+   if(!CopyAt(hATR_Entry,0,shift,atr,"Slope ATR") || atr<=0.0)
+      return true;
+
+   double slopeNorm = (emaNow-emaPrev)/(atr);
+   if(dir>0 && slopeNorm<gConfig.slopeMin)
+      return (adxH4>=gConfig.minAdxH4+5.0);
+   if(dir<0 && -slopeNorm<gConfig.slopeMin)
+      return (adxH4>=gConfig.minAdxH4+5.0);
    return true;
 }
 
@@ -244,7 +261,7 @@ bool ExtensionOk(double &distATR)
 {
    distATR=0.0;
    double ema=0.0,close=0.0;
-   if(!CopyAt(hEMA_E,0,1,ema,"EMA extension") || !CopyCloseAt(InpSymbol,InpTF_Entry,1,close,"Close extension"))
+   if(!CopyAt(hEMA_E,0,1,ema,"EMA extension") || !CopyCloseAt(gConfig.symbol,gConfig.tfEntry,1,close,"Close extension"))
       return true;
 
    double point=0.0;
@@ -260,19 +277,19 @@ bool ExtensionOk(double &distATR)
       return true;
 
    distATR = MathAbs(close-ema)/point/atrPts;
-   return (distATR<=InpMaxExtension_ATR);
+   return (distATR<=gConfig.maxExtensionAtr);
 }
 
 bool CooldownOk(void)
 {
-   if(InpCooldownBars<=0 || lastEntryBarTime==0)
+   if(gConfig.cooldownBars<=0 || lastEntryBarTime==0)
       return true;
 
-   int shift=iBarShift(InpSymbol,InpTF_Entry,lastEntryBarTime,true);
+   int shift=iBarShift(gConfig.symbol,gConfig.tfEntry,lastEntryBarTime,true);
    if(shift<0)
       return true;
 
-   return (shift>=InpCooldownBars);
+   return (shift>=gConfig.cooldownBars);
 }
 
 bool SessionOk(void)
@@ -280,14 +297,14 @@ bool SessionOk(void)
    MqlDateTime timeStruct;
    TimeToStruct(TimeCurrent(),timeStruct);
    int hour=AdjustedHour(timeStruct);
-   bool s1=(hour>=InpSess1_StartHour && hour<InpSess1_EndHour);
-   bool s2=(hour>=InpSess2_StartHour && hour<InpSess2_EndHour);
+   bool s1=(hour>=gConfig.sess1StartHour && hour<gConfig.sess1EndHour);
+   bool s2=(hour>=gConfig.sess2StartHour && hour<gConfig.sess2EndHour);
    return (s1||s2);
 }
 
 int AdjustedHour(const MqlDateTime &t)
 {
-   int hour=(t.hour+InpTZ_OffsetHours)%24;
+   int hour=(t.hour+gConfig.tzOffsetHours)%24;
    if(hour<0)
       hour+=24;
    return hour;
@@ -295,29 +312,29 @@ int AdjustedHour(const MqlDateTime &t)
 
 bool EquityFilterOk(void)
 {
-   if(!InpUseEquityFilter)
+   if(!gConfig.useEquityFilter)
       return true;
 
    double equity=AccountInfoDouble(ACCOUNT_EQUITY);
-   double limit = eqEMA*(1.0-InpEqUnderwaterPct/100.0);
+   double limit = eqEMA*(1.0-gConfig.eqUnderwaterPct/100.0);
    return (equity>=limit);
 }
 
 void GetRegimeFactors(const double atrD1pts,int &donchianBars,double &slMult,double &tpMult)
 {
-   double pivot = MathMax(1.0,InpATR_D1_Pivot);
+   double pivot = MathMax(1.0,gConfig.atrD1Pivot);
    double factor = atrD1pts/pivot;
-   factor = MathMin(InpRegimeMaxFactor,MathMax(InpRegimeMinFactor,factor));
+   factor = MathMin(gConfig.regimeMaxFactor,MathMax(gConfig.regimeMinFactor,factor));
 
-   double base = InpDonchianBars_Base;
-   double lower = MathMax(2.0,base-InpDonchianBars_MinMax);
-   double upper = base + InpDonchianBars_MinMax;
+   double base = gConfig.donchianBarsBase;
+   double lower = MathMax(10.0,base-gConfig.donchianBarsMinMax);
+   double upper = MathMax(lower,MathMin(30.0,base + gConfig.donchianBarsMinMax));
    double scaled = base*factor;
    scaled = MathMax(lower,MathMin(upper,scaled));
    donchianBars = (int)MathRound(scaled);
 
-   slMult = InpATR_SL_mult_Base * factor;
-   tpMult = InpATR_TP_mult_Base * factor;
+   slMult = gConfig.atrSlMultBase * factor;
+   tpMult = gConfig.atrTpMultBase * factor;
 }
 
 void ResetDailyAnchors(void)
@@ -334,14 +351,78 @@ int OpenPositionsByMagic(void)
       ulong ticket=PositionGetTicket(i);
       if(!PositionSelectByTicket(ticket))
          continue;
-      if(PositionGetString(POSITION_SYMBOL)!=InpSymbol)
+      if(PositionGetString(POSITION_SYMBOL)!=gConfig.symbol)
          continue;
-      if((int)PositionGetInteger(POSITION_MAGIC)!=InpMagic)
+      if((int)PositionGetInteger(POSITION_MAGIC)!=gConfig.magic)
          continue;
       count++;
    }
    return count;
 }
+
+bool HTFConfirmOk(const int dir)
+{
+   if(!gConfig.useHTFConfirm || dir==0)
+      return true;
+
+   double emaNow,emaPrev;
+   if(!CopyAt(hEMA_T1,0,0,emaNow,"HTF ema now") || !CopyAt(hEMA_T1,0,1,emaPrev,"HTF ema prev"))
+      return false;
+
+   double slope=emaNow-emaPrev;
+   if(dir>0)
+      return (slope>0.0);
+   if(dir<0)
+      return (slope<0.0);
+   return true;
+}
+
+bool NewsFilterOk(void)
+{
+   if(!gConfig.useNewsFilter || !CalendarIsEnabled())
+      return true;
+
+   datetime now=TimeCurrent();
+   MqlCalendarValue values[];
+   datetime from=now-(gConfig.newsBlockBefore+60)*60;
+   datetime to  =now+(gConfig.newsBlockAfter+60)*60;
+   int copied=CalendarValueHistory(values,from,to);
+   if(copied<=0)
+      return true; // fail open
+
+   for(int i=0;i<copied;++i)
+   {
+      if(values[i].impact<gConfig.newsImpact)
+         continue;
+      long flags=values[i].flags;
+      if((flags & CALENDAR_FLAG_FORECAST)==0 && (flags & CALENDAR_FLAG_REVISED)==0)
+      {
+         // upcoming or recent event
+         datetime eventTime=values[i].time;
+         if(MathAbs(eventTime-now) <= gConfig.newsBlockAfter*60)
+            return false;
+         if(now<eventTime && (eventTime-now)<=gConfig.newsBlockBefore*60)
+            return false;
+      }
+   }
+   return true;
+}
+
+bool FridayFlatWindow(void)
+{
+   if(!gConfig.flatOnFriday)
+      return false;
+
+   datetime now=TimeCurrent();
+   MqlDateTime t;
+   TimeToStruct(now,t);
+   if(t.day_of_week!=5)
+      return false;
+
+   int minutes=t.hour*60+t.min;
+   return (minutes>=gConfig.fridayFlatMinutes);
+}
+
 
 #endif // __EA_MARKET_UTILS_MQH__
 
