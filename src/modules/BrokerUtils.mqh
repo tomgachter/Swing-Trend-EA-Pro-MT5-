@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __BROKER_UTILS_MQH__
+#define __BROKER_UTILS_MQH__
 
 #include <Trade\Trade.mqh>
 
@@ -68,3 +69,5 @@ public:
       return m_trade.PositionClose(ticket);
    }
 };
+
+#endif // __BROKER_UTILS_MQH__

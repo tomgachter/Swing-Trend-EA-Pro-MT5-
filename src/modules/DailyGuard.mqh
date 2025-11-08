@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __DAILY_GUARD_MQH__
+#define __DAILY_GUARD_MQH__
 
 class DailyGuard
 {
@@ -63,12 +64,14 @@ public:
       }
    }
 
-   bool AllowNewTrade(const double upcomingRiskPercent) const
+   bool AllowNewTrade(const double upcomingRiskPercent)
    {
       double totalRisk = m_realizedLossPercent + m_openRiskPercent + upcomingRiskPercent;
       return (totalRisk <= m_maxDailyRiskPercent);
    }
 
-   double RiskReductionFactor() const { return m_riskReductionFactor; }
-   datetime CurrentDay() const { return m_currentDay; }
+   double RiskReductionFactor() { return m_riskReductionFactor; }
+   datetime CurrentDay() { return m_currentDay; }
 };
+
+#endif // __DAILY_GUARD_MQH__

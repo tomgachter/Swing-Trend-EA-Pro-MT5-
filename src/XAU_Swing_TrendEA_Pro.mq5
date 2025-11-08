@@ -280,13 +280,13 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
 //+------------------------------------------------------------------+
 double OnTester()
 {
-   double trades = TesterStatistics(STAT_TRADES);
-   double winTrades = TesterStatistics(STAT_PROFIT_TRADES);
-   double profitFactor = TesterStatistics(STAT_PROFIT_FACTOR);
-   double maxDD = TesterStatistics(STAT_EQUITY_DDRELATIVE);
-   double sharpe = TesterStatistics(STAT_SHARPE_RATIO);
-   double avgHoldHours = TesterStatistics(STAT_AVG_HOLD_TIME)/3600.0;
-   double equityCorr = TesterStatistics(STAT_LINEAR_CORRELATION_EQUITY);
+   double trades = TesterStatistics((ENUM_STATISTICS)STAT_TRADES);
+   double winTrades = TesterStatistics((ENUM_STATISTICS)STAT_PROFIT_TRADES);
+   double profitFactor = TesterStatistics((ENUM_STATISTICS)STAT_PROFIT_FACTOR);
+   double maxDD = TesterStatistics((ENUM_STATISTICS)STAT_EQUITY_DDRELATIVE);
+   double sharpe = TesterStatistics((ENUM_STATISTICS)STAT_SHARPE_RATIO);
+   double avgHoldHours = TesterStatistics((ENUM_STATISTICS)STAT_AVG_HOLD_TIME)/3600.0;
+   double equityCorr = TesterStatistics((ENUM_STATISTICS)STAT_LINEAR_CORRELATION_EQUITY);
    double winRate = (trades>0.0 ? winTrades/trades*100.0 : 0.0);
 
    bool pass=true;

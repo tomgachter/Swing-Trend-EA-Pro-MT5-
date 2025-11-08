@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __RISK_ENGINE_MQH__
+#define __RISK_ENGINE_MQH__
 
 #include "DailyGuard.mqh"
 #include "Sizer.mqh"
@@ -48,12 +49,13 @@ public:
       return (ddPercent >= m_maxEquityDDPercent);
    }
 
-   bool AllowNewTrade(const double stopPoints,const PositionSizer &sizer,double &volume,double &riskPercent)
+   bool AllowNewTrade(const double stopPoints,PositionSizer &sizer,double &volume,double &riskPercent)
    {
       double balance = AccountInfoDouble(ACCOUNT_BALANCE);
       double riskAdjust = m_dailyGuard.RiskReductionFactor();
       double lot = sizer.CalculateVolume(m_riskMode,m_riskSetting,stopPoints,balance,riskAdjust);
-      if(lot<sizer.Context().minLot)
+      SymbolContext ctx = sizer.Context();
+      if(lot<ctx.minLot)
          return false;
 
       if(m_riskMode==RISK_FIXED_LOTS)
@@ -86,6 +88,8 @@ public:
       m_dailyGuard.RegisterResult(profit,AccountInfoDouble(ACCOUNT_BALANCE));
    }
 
-   RiskMode Mode() const { return m_riskMode; }
-   double RiskSetting() const { return m_riskSetting; }
+   RiskMode Mode() { return m_riskMode; }
+   double RiskSetting() { return m_riskSetting; }
 };
+
+#endif // __RISK_ENGINE_MQH__

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __BIAS_ENGINE_MQH__
+#define __BIAS_ENGINE_MQH__
 
 #include "RegimeFilter.mqh"
 
@@ -14,7 +15,7 @@ private:
    double          m_lastEmaD1;
    int             m_direction;
 
-   double Slope(const int handle,const ENUM_TIMEFRAMES tf,const double atr) const
+   double Slope(const int handle,const ENUM_TIMEFRAMES tf,const double atr)
    {
       double buffer[2];
       if(CopyBuffer(handle,0,1,2,buffer)!=2)
@@ -43,15 +44,23 @@ public:
       return (m_handleH1!=INVALID_HANDLE && m_handleH4!=INVALID_HANDLE && m_handleD1!=INVALID_HANDLE);
    }
 
-   bool Update(const RegimeFilter &regime)
+   bool Update(RegimeFilter &regime)
    {
-      double emaH1=0.0, emaH4=0.0, emaD1=0.0;
-      if(CopyBuffer(m_handleH1,0,1,1,&emaH1)!=1)
+      double emaH1Buffer[];
+      double emaH4Buffer[];
+      double emaD1Buffer[];
+      ArrayResize(emaH1Buffer,1);
+      ArrayResize(emaH4Buffer,1);
+      ArrayResize(emaD1Buffer,1);
+      if(CopyBuffer(m_handleH1,0,1,1,emaH1Buffer)!=1)
          return false;
-      if(CopyBuffer(m_handleH4,0,1,1,&emaH4)!=1)
+      if(CopyBuffer(m_handleH4,0,1,1,emaH4Buffer)!=1)
          return false;
-      if(CopyBuffer(m_handleD1,0,1,1,&emaD1)!=1)
+      if(CopyBuffer(m_handleD1,0,1,1,emaD1Buffer)!=1)
          return false;
+      double emaH1 = emaH1Buffer[0];
+      double emaH4 = emaH4Buffer[0];
+      double emaD1 = emaD1Buffer[0];
       m_lastEmaH1 = emaH1;
       m_lastEmaH4 = emaH4;
       m_lastEmaD1 = emaD1;
@@ -89,6 +98,8 @@ public:
       return true;
    }
 
-   int Direction() const { return m_direction; }
-   double EmaH1() const { return m_lastEmaH1; }
+   int Direction() { return m_direction; }
+   double EmaH1() { return m_lastEmaH1; }
 };
+
+#endif // __BIAS_ENGINE_MQH__
