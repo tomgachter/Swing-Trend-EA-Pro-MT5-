@@ -88,11 +88,24 @@ public:
       double slopeH1 = Slope(m_handleH1,PERIOD_H1,regime.AtrH1());
       double slopeH4 = Slope(m_handleH4,PERIOD_H4,regime.AtrH4());
       double slopeD1 = Slope(m_handleD1,PERIOD_D1,regime.AtrH4());
-      double threshold = MathMax(0.0,m_slopeThreshold);
+      double threshold = MathMax(0.0005,m_slopeThreshold);
 
-      if(votesLong>=2 && slopeH1>-threshold && slopeH4>-threshold && slopeD1>-threshold)
+      double slopeScore = 0.5*slopeH1 + 0.3*slopeH4 + 0.2*slopeD1;
+      RegimeBucket bucket = regime.CurrentBucket();
+      double flex = 0.6;
+      if(bucket==REGIME_LOW)
+         flex = 0.85;
+      else if(bucket==REGIME_HIGH)
+         flex = 0.55;
+
+      double longBarrier = -threshold*flex;
+      double shortBarrier = threshold*flex;
+      bool longSlopeOk = (slopeScore>longBarrier && slopeH1>-threshold && slopeH4>-threshold*0.8 && slopeD1>-threshold*0.6);
+      bool shortSlopeOk = (slopeScore<-shortBarrier && slopeH1<-threshold && slopeH4<-threshold*0.8 && slopeD1<-threshold*0.6);
+
+      if(votesLong>=2 && longSlopeOk)
          m_direction = 1;
-      else if(votesShort>=2 && slopeH1<threshold && slopeH4<threshold && slopeD1<threshold)
+      else if(votesShort>=2 && shortSlopeOk)
          m_direction = -1;
       else
          m_direction = 0;
