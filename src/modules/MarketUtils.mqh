@@ -3,6 +3,8 @@
 
 #include "EAGlobals.mqh"
 
+double R_MTD();
+
 datetime DateOfNextUTC00(void)
 {
    datetime nowUtc = TimeGMT();
@@ -195,12 +197,12 @@ bool RegimeOK(double &atrD1pts)
    return true;
 }
 
-bool ADX_OK(double &adxOut)
+bool ADX_OK(double &adxOut,const double minThreshold=gConfig.minAdxH4)
 {
    adxOut=0.0;
    if(!CopyAt(hADX_H4,0,1,adxOut,"ADX"))
       return false;
-   return (adxOut>=gConfig.minAdxH4);
+   return (adxOut>=minThreshold);
 }
 
 bool DonchianHL(const string symbol,const ENUM_TIMEFRAMES tf,const int bars,double &hi,double &lo)
@@ -256,7 +258,7 @@ int TrendDirection(void)
    return 0;
 }
 
-bool SlopeOkRelaxed(const int handle,const int shift,const int dir,const double adxH4)
+bool SlopeOkRelaxed(const int handle,const int shift,const int dir,const double adxH4,const double adxThreshold)
 {
    if(!gConfig.useSlopeFilter)
       return true;
@@ -289,9 +291,9 @@ bool SlopeOkRelaxed(const int handle,const int shift,const int dir,const double 
 
    double slopeNorm = (emaNow-emaPrev)/(atr);
    if(dir>0 && slopeNorm<slopeMin)
-      return (adxH4>=gConfig.minAdxH4+5.0);
+      return (adxH4>=adxThreshold+5.0);
    if(dir<0 && -slopeNorm<slopeMin)
-      return (adxH4>=gConfig.minAdxH4+5.0);
+      return (adxH4>=adxThreshold+5.0);
    return true;
 }
 
@@ -443,6 +445,62 @@ bool NewsFilterOk(void)
    // The FTMO swing setup operates without the MetaTrader economic
    // calendar feed.  To keep behaviour predictable we simply disable the
    // calendar-based block and allow trading to continue.
+   return true;
+}
+
+bool CanOpenNewTrade(double &minAdxThreshold,double &breakoutAtrFrac)
+{
+   minAdxThreshold = gConfig.minAdxH4;
+   breakoutAtrFrac = InpBreakoutBufferATR;
+
+   if(TimeCurrent()<gPauseUntil)
+   {
+      PrintDebug("Guard: GlobalPauseActive");
+      return false;
+   }
+
+   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
+   if(InpUseMonthlyGuards)
+   {
+      double equityPct = (equity>0.0 ? (gMonthlyPnL/MathMax(1.0,equity))*100.0 : 0.0);
+      double monthlyR  = R_MTD();
+      if((equity>0.0 && equityPct<=-InpMTD_LossStopPct) || (monthlyR<=-InpMTD_LossStop_R))
+      {
+         PrintDebug("Guard: MonthlyLossStop");
+         return false;
+      }
+
+      bool profitLock = (equity>0.0 && equityPct>=InpMTD_ProfitLockPct) || (monthlyR>=InpMTD_ProfitLock_R);
+      gRiskScale = (profitLock ? 0.5 : 1.0);
+      if(profitLock)
+         PrintDebug("Guard: MonthlyProfitLock");
+   }
+   else
+   {
+      gRiskScale = 1.0;
+   }
+
+   if(InpUseWeeklyCooling)
+   {
+      double weeklyPct = (equity>0.0 ? (gWeeklyPnL/MathMax(1.0,equity))*100.0 : 0.0);
+      bool lossHit = (equity>0.0 && weeklyPct<=-InpWTD_LossStopPct);
+      bool streakHit = (InpMaxLosingDaysStreak>0 && gLosingDaysStreak>=InpMaxLosingDaysStreak);
+      if(lossHit || streakHit)
+      {
+         gPauseUntil = TimeCurrent() + 24*60*60;
+         PrintDebug("Guard: WeeklyCooling");
+         return false;
+      }
+   }
+
+   if(InpAdaptiveGatesWhenMTDNeg && gMonthlyPnL<0.0)
+   {
+      minAdxThreshold += InpMTDNeg_ADX_Bonus;
+      breakoutAtrFrac += InpMTDNeg_BufferATR_Bonus;
+   }
+
+   gRiskScale = MathMax(0.2,MathMin(1.0,gRiskScale));
+
    return true;
 }
 
