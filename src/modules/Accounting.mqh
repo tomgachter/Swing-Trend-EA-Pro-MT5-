@@ -18,31 +18,26 @@ void InitAccountingState()
    gCurrentMonth     = -1;
 }
 
-static datetime CurrentUTC()
-{
-   return TimeCurrent() - (datetime)(gConfig.tzOffsetHours*3600);
-}
-
-static int CurrentMonthId(const datetime whenUtc)
+int CurrentMonthId(const datetime whenTime)
 {
    MqlDateTime t;
-   TimeToStruct(whenUtc,t);
+   TimeToStruct(whenTime,t);
    return t.year*100 + t.mon;
 }
 
-static int CurrentDaySerial(const datetime whenUtc)
+int CurrentDaySerial(const datetime whenTime)
 {
-   return (int)(whenUtc/86400);
+   return (int)(whenTime/86400);
 }
 
-static int CurrentIsoWeekId(const datetime whenUtc)
+int CurrentIsoWeekId(const datetime whenTime)
 {
    MqlDateTime t;
-   TimeToStruct(whenUtc,t);
+   TimeToStruct(whenTime,t);
    int wday = t.day_of_week;
    if(wday==0)
       wday=7;
-   datetime thursday = whenUtc + (4 - wday)*86400;
+   datetime thursday = whenTime + (4 - wday)*86400;
    MqlDateTime th;
    TimeToStruct(thursday,th);
    int week = (th.day_of_year-1)/7 + 1;
@@ -51,17 +46,17 @@ static int CurrentIsoWeekId(const datetime whenUtc)
 
 void UpdateAccounting()
 {
-   datetime nowUtc = CurrentUTC();
-   if(nowUtc<=0)
-      nowUtc = TimeCurrent();
+   datetime nowServer = TimeCurrent();
+   if(nowServer<=0)
+      nowServer = TimeCurrent();
 
-   int daySerial = CurrentDaySerial(nowUtc);
+   int daySerial = CurrentDaySerial(nowServer);
    if(gCurrentDay==-1)
       gCurrentDay = daySerial;
    if(gCurrentWeek==-1)
-      gCurrentWeek = CurrentIsoWeekId(nowUtc);
+      gCurrentWeek = CurrentIsoWeekId(nowServer);
    if(gCurrentMonth==-1)
-      gCurrentMonth = CurrentMonthId(nowUtc);
+      gCurrentMonth = CurrentMonthId(nowServer);
 
    if(daySerial!=gCurrentDay)
    {
@@ -73,7 +68,7 @@ void UpdateAccounting()
       gCurrentDay=daySerial;
    }
 
-   int weekId = CurrentIsoWeekId(nowUtc);
+   int weekId = CurrentIsoWeekId(nowServer);
    if(weekId!=gCurrentWeek)
    {
       gWeeklyPnL=0.0;
@@ -81,7 +76,7 @@ void UpdateAccounting()
       gCurrentWeek=weekId;
    }
 
-   int monthId = CurrentMonthId(nowUtc);
+   int monthId = CurrentMonthId(nowServer);
    if(monthId!=gCurrentMonth)
    {
       gMonthlyPnL=0.0;
@@ -91,7 +86,7 @@ void UpdateAccounting()
    }
 }
 
-static double ResolveRiskPerLot(const PositionMemo &memo)
+double ResolveRiskPerLot(const PositionMemo &memo)
 {
    if(memo.riskPerLot>0.0)
       return memo.riskPerLot;
