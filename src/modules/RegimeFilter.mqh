@@ -1,0 +1,97 @@
+#pragma once
+
+#include <Trade\Trade.mqh>
+
+enum RegimeBucket
+{
+   REGIME_LOW = 0,
+   REGIME_NORMAL = 1,
+   REGIME_HIGH = 2
+};
+
+class RegimeFilter
+{
+private:
+   string            m_symbol;
+   ENUM_TIMEFRAMES   m_tfH1;
+   ENUM_TIMEFRAMES   m_tfH4;
+   int               m_atrPeriod;
+   int               m_handleH1;
+   int               m_handleH4;
+   double            m_lowThreshold;
+   double            m_highThreshold;
+   double            m_lastAtrH1;
+   double            m_lastAtrH4;
+   RegimeBucket      m_currentBucket;
+   datetime          m_lastUpdateBarTime;
+
+   bool CalculatePercentiles()
+   {
+      const int lookback = 2000;
+      double buffer[];
+      ArrayResize(buffer,lookback);
+      int copied = CopyBuffer(m_handleH1,0,0,lookback,buffer);
+      if(copied <= 50)
+         return false;
+      ArrayResize(buffer,copied);
+      ArraySort(buffer,WHOLE_ARRAY,0,MODE_ASCEND);
+      int lowIndex  = (int)MathMax(0,MathFloor(0.30*(copied-1)));
+      int highIndex = (int)MathMax(0,MathFloor(0.70*(copied-1)));
+      m_lowThreshold  = buffer[lowIndex];
+      m_highThreshold = buffer[highIndex];
+      return true;
+   }
+
+public:
+   RegimeFilter() : m_symbol(_Symbol), m_tfH1(PERIOD_H1), m_tfH4(PERIOD_H4), m_atrPeriod(14),
+                    m_handleH1(INVALID_HANDLE), m_handleH4(INVALID_HANDLE), m_lowThreshold(0.0),
+                    m_highThreshold(0.0), m_lastAtrH1(0.0), m_lastAtrH4(0.0),
+                    m_currentBucket(REGIME_NORMAL), m_lastUpdateBarTime(0)
+   {
+   }
+
+   bool Init(const string symbol,const int atrPeriod=14)
+   {
+      m_symbol    = symbol;
+      m_atrPeriod = atrPeriod;
+      m_handleH1  = iATR(m_symbol,m_tfH1,m_atrPeriod);
+      m_handleH4  = iATR(m_symbol,m_tfH4,m_atrPeriod);
+      if(m_handleH1==INVALID_HANDLE || m_handleH4==INVALID_HANDLE)
+         return false;
+      if(!CalculatePercentiles())
+         return false;
+      return Update(true);
+   }
+
+   bool Update(const bool force=false)
+   {
+      datetime barTime = iTime(m_symbol,m_tfH1,0);
+      if(!force && barTime==m_lastUpdateBarTime)
+         return true;
+
+      double atrH1=0.0, atrH4=0.0;
+      if(CopyBuffer(m_handleH1,0,0,1,&atrH1)!=1)
+         return false;
+      if(CopyBuffer(m_handleH4,0,0,1,&atrH4)!=1)
+         return false;
+
+      m_lastAtrH1 = atrH1;
+      m_lastAtrH4 = atrH4;
+      m_lastUpdateBarTime = barTime;
+
+      if(atrH1 <= m_lowThreshold)
+         m_currentBucket = REGIME_LOW;
+      else if(atrH1 >= m_highThreshold)
+         m_currentBucket = REGIME_HIGH;
+      else
+         m_currentBucket = REGIME_NORMAL;
+      return true;
+   }
+
+   RegimeBucket CurrentBucket() const { return m_currentBucket; }
+
+   double AtrH1() const { return m_lastAtrH1; }
+   double AtrH4() const { return m_lastAtrH4; }
+   double LowThreshold() const { return m_lowThreshold; }
+   double HighThreshold() const { return m_highThreshold; }
+};
