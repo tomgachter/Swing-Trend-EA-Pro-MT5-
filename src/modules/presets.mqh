@@ -54,16 +54,6 @@ struct RiskGuardProfile
    bool   equityFilterAdaptive;
 };
 
-Regime DetectRegime();
-Preset MakePreset(const int aggressiveness,const Regime regime,const ENUM_RiskGuardsPreset guards);
-RiskGuardProfile MakeRiskGuardProfile(const ENUM_RiskGuardsPreset guards);
-double ResolveAdaptiveEquityLimit(const Preset &preset,const RiskGuardProfile &profile,const double wtdPnLPct,const Regime regime,const int aggressiveness);
-
-double PresetTrailK(const Preset &preset,const Regime regime,const bool isAddon);
-
-double PresetBufferATR(const Preset &preset,const Regime regime);
-int PresetDonchianBars(const Preset &preset,const Regime regime);
-
 inline double __preset_lerp(const double a,const double b,const double t)
 {
    return a + (b-a)*t;
@@ -108,16 +98,21 @@ Regime DetectRegime()
 {
    const int atrPeriod=14;
    const int emaPeriod=60;
-   double atrSeries[emaPeriod];
-   ArrayInitialize(atrSeries,0.0);
-   for(int i=0;i<emaPeriod;i++)
-   {
-      double val=iATR(_Symbol,PERIOD_D1,atrPeriod,i);
-      atrSeries[i]=(val>0.0?val:atrSeries[MathMax(0,i-1)]);
-   }
-   double atrD1=atrSeries[0];
-   double alpha=2.0/(emaPeriod+1.0);
-   double ema=atrSeries[emaPeriod-1];
+   int handle = iATR(_Symbol,PERIOD_D1,atrPeriod);
+   if(handle==INVALID_HANDLE)
+      return REG_MID;
+
+   double atrSeries[];
+   ArraySetAsSeries(atrSeries,true);
+   int copied = CopyBuffer(handle,0,0,emaPeriod,atrSeries);
+   IndicatorRelease(handle);
+
+   if(copied<emaPeriod)
+      return REG_MID;
+
+   double atrD1 = atrSeries[0];
+   double alpha = 2.0/(emaPeriod+1.0);
+   double ema   = atrSeries[emaPeriod-1];
    for(int i=emaPeriod-2;i>=0;--i)
       ema = alpha*atrSeries[i] + (1.0-alpha)*ema;
    double atrRef = ema;

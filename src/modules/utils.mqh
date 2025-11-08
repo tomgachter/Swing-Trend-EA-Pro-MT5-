@@ -27,12 +27,8 @@ inline double SafePoint()
 
 inline void PrintDebug(const string text)
 {
-#if EA_DEBUG
-   Print(text);
-#else
-   if(gConfig.debug)
+   if(EA_DEBUG>0 || gConfig.debug)
       Print(text);
-#endif
 }
 
 inline string EnumToString(const Regime regime)

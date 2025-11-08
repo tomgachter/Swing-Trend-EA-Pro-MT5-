@@ -140,5 +140,11 @@
 #ifndef STAT_MODELLING_QUALITY
    #define STAT_MODELLING_QUALITY      42
 #endif
+#ifndef STAT_START_TRADE_TIME
+   #define STAT_START_TRADE_TIME       43
+#endif
+#ifndef STAT_LAST_TRADE_TIME
+   #define STAT_LAST_TRADE_TIME        44
+#endif
 
 #endif  // TESTERCOMPAT_MQH

@@ -120,10 +120,13 @@ void OnTick()
    if((int)(TimeCurrent()/86400)!=daySerialAnchor)
       ResetDailyAnchors();
 
-   double atrD1=iATR(gConfig.symbol,PERIOD_D1,14,0);
-   double point=SafePoint();
-   if(atrD1>0.0 && point>0.0)
-      lastValidAtrD1Pts = atrD1/point;
+   double atrD1=0.0;
+   if(CopyAt(hATR_D1,0,0,atrD1,"ATR D1 value"))
+   {
+      double point=SafePoint();
+      if(atrD1>0.0 && point>0.0)
+         lastValidAtrD1Pts = atrD1/point;
+   }
 
    gRegime = DetectRegime();
    gPreset = MakePreset(Aggressiveness,gRegime,RiskGuardsPreset);
@@ -188,10 +191,10 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
 //+------------------------------------------------------------------+
 double OnTester()
 {
-   double pf      = (double)TesterStatistics(STAT_PROFIT_FACTOR);
-   double eqdd    = (double)TesterStatistics(STAT_EQUITY_DDREL_PERCENT);
-   double trades  = (double)TesterStatistics(STAT_TRADES);
-   double sharpe  = (double)TesterStatistics(STAT_SHARPE_RATIO);
+   double pf      = (double)TesterStatistics((ENUM_STATISTICS)STAT_PROFIT_FACTOR);
+   double eqdd    = (double)TesterStatistics((ENUM_STATISTICS)STAT_EQUITY_DDREL_PERCENT);
+   double trades  = (double)TesterStatistics((ENUM_STATISTICS)STAT_TRADES);
+   double sharpe  = (double)TesterStatistics((ENUM_STATISTICS)STAT_SHARPE_RATIO);
    ReportMonthlyPerformance();
    if(pf<=0.0 || trades<60.0)
       return -DBL_MAX;
@@ -213,8 +216,8 @@ void ReportMonthlyPerformance(void)
 
    datetime endTime = TimeCurrent();
    if(endTime<=0)
-      endTime = (datetime)TesterStatistics(STAT_LAST_TRADE_TIME);
-   datetime startTime = (datetime)TesterStatistics(STAT_START_TRADE_TIME);
+      endTime = (datetime)TesterStatistics((ENUM_STATISTICS)STAT_LAST_TRADE_TIME);
+   datetime startTime = (datetime)TesterStatistics((ENUM_STATISTICS)STAT_START_TRADE_TIME);
    if(startTime<=0 || startTime>endTime)
       startTime = 0;
 

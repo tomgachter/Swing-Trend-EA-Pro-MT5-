@@ -2,8 +2,9 @@
 #define __EA_MARKET_UTILS_MQH__
 
 #include "EAGlobals.mqh"
+#include "utils.mqh"
 
-double R_MTD();
+double R_MTD(void);
 
 datetime DateOfNextBrokerMidnight(void)
 {
@@ -20,12 +21,6 @@ datetime DateOfNextBrokerMidnight(void)
       midnight += 24*60*60;
 
    return midnight;
-}
-
-void PrintDebug(const string text)
-{
-   if(gConfig.debug)
-      Print(text);
 }
 
 bool GetSymbolDouble(const ENUM_SYMBOL_INFO_DOUBLE prop,double &value,const string tag)
