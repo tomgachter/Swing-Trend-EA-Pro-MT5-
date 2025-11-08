@@ -486,6 +486,8 @@ void TryOpenAddonIfEligible(void)
    double adxOut=0.0;
    if(!ADX_OK(adxOut))
       return;
+   if(adxOut < gConfig.minAdxH4 + 5.0)
+      return;
 
    int baseDir = (type==POSITION_TYPE_BUY ? +1 : -1);
    if(trendDir!=baseDir)
