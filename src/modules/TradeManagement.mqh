@@ -3,6 +3,135 @@
 
 #include "EAGlobals.mqh"
 
+int BarsSinceEntry(const ulong ticket)
+{
+   if(ticket==0)
+      return 9999;
+   if(!PositionSelectByTicket(ticket))
+      return 9999;
+   datetime openTime=(datetime)PositionGetInteger(POSITION_TIME);
+   int shift=iBarShift(gConfig.symbol,gConfig.tfEntry,openTime,true);
+   return (shift<0?9999:shift);
+}
+
+double HoursSinceEntry(const ulong ticket)
+{
+   if(ticket==0)
+      return 1e6;
+   if(!PositionSelectByTicket(ticket))
+      return 1e6;
+   datetime openTime=(datetime)PositionGetInteger(POSITION_TIME);
+   return (TimeCurrent()-openTime)/3600.0;
+}
+
+bool ReachedBreakEven(const ulong ticket)
+{
+   if(ticket==0)
+      return false;
+   if(!PositionSelectByTicket(ticket))
+      return false;
+   double openPrice=PositionGetDouble(POSITION_PRICE_OPEN);
+   double curSL    =PositionGetDouble(POSITION_SL);
+   long type       =PositionGetInteger(POSITION_TYPE);
+   if(type==POSITION_TYPE_BUY)
+      return (curSL>=openPrice && curSL!=0.0);
+   if(type==POSITION_TYPE_SELL)
+      return (curSL<=openPrice && curSL!=0.0);
+   return false;
+}
+
+double ComputeRiskPerLotValue(const double riskPts,const double point)
+{
+   if(riskPts<=0.0 || point<=0.0)
+      return 0.0;
+   double tickValue=0.0,tickSize=0.0;
+   if(!GetSymbolDouble(SYMBOL_TRADE_TICK_VALUE,tickValue,"tick_value") ||
+      !GetSymbolDouble(SYMBOL_TRADE_TICK_SIZE,tickSize,"tick_size") ||
+      tickSize<=0.0)
+      return 0.0;
+   double riskPrice=riskPts*point;
+   return (riskPrice/tickSize)*tickValue;
+}
+
+double GetMAEinATR(const ulong ticket)
+{
+   int idx=FindMemoIndex(ticket);
+   if(idx<0)
+      return 0.0;
+   if(positionMemos[idx].entryAtrPoints<=0.0)
+      return 0.0;
+   return (positionMemos[idx].worstAdversePts/positionMemos[idx].entryAtrPoints);
+}
+
+void MarkRunnerMode(const ulong ticket,const bool enable)
+{
+   int idx=FindMemoIndex(ticket);
+   if(idx<0)
+      return;
+   positionMemos[idx].runnerMode = enable;
+}
+
+bool IsRunnerMode(const ulong ticket)
+{
+   int idx=FindMemoIndex(ticket);
+   if(idx<0)
+      return false;
+   return positionMemos[idx].runnerMode;
+}
+
+bool SetATRTrailing(const ulong ticket,const double atrMult)
+{
+   if(ticket==0 || atrMult<=0.0)
+      return false;
+   if(!PositionSelectByTicket(ticket))
+      return false;
+
+   double point=0.0;
+   if(!GetSymbolDouble(SYMBOL_POINT,point,"point") || point<=0.0)
+      return false;
+
+   double atr=0.0;
+   if(!CopyAt(hATR_H4,0,0,atr,"ATR trail runner") || atr<=0.0)
+      return false;
+
+   double bid=0.0,ask=0.0;
+   if(!GetBidAsk(bid,ask))
+      return false;
+
+   double curSL = PositionGetDouble(POSITION_SL);
+   double curTP = PositionGetDouble(POSITION_TP);
+   long   type  = PositionGetInteger(POSITION_TYPE);
+   double dist  = atrMult*(atr/point)*point;
+
+   if(type==POSITION_TYPE_BUY)
+   {
+      double proposed = bid - dist;
+      double newSL = (curSL==0.0?proposed:MathMax(curSL,proposed));
+      if(newSL>curSL)
+         return trade.PositionModify(gConfig.symbol,newSL,curTP);
+      return true;
+   }
+   else if(type==POSITION_TYPE_SELL)
+   {
+      double proposed = ask + dist;
+      double newSL = (curSL==0.0?proposed:MathMin(curSL,proposed));
+      if(newSL<curSL || curSL==0.0)
+         return trade.PositionModify(gConfig.symbol,newSL,curTP);
+      return true;
+   }
+   return false;
+}
+
+double ComputeRMultiple(const int memoIndex,const double progressPts)
+{
+   if(memoIndex<0 || memoIndex>=ArraySize(positionMemos))
+      return 0.0;
+   double initialRisk=positionMemos[memoIndex].initialRiskPoints;
+   if(initialRisk<=0.0)
+      return 0.0;
+   return (progressPts/initialRisk);
+}
+
 int BarsSinceOpen(void)
 {
    if(!PositionSelect(gConfig.symbol))
@@ -154,12 +283,14 @@ void EnterTrade(const ENUM_ORDER_TYPE type,const bool isAddon)
       ulong ticket=(ulong)PositionGetInteger(POSITION_TICKET);
       double openPrice=PositionGetDouble(POSITION_PRICE_OPEN);
       double curSL=PositionGetDouble(POSITION_SL);
+      double volume=PositionGetDouble(POSITION_VOLUME);
       double riskPts=MathAbs(openPrice-curSL)/point;
       if(riskPts<=0.0)
          riskPts=slPts;
       long posType=PositionGetInteger(POSITION_TYPE);
       int memoDir = (posType==POSITION_TYPE_BUY ? 1 : -1);
-      UpsertMemo(ticket,riskPts,atrPts,lastBarTime,isAddon,openPrice,memoDir);
+      double riskPerLot=ComputeRiskPerLotValue(riskPts,point);
+      UpsertMemo(ticket,riskPts,atrPts,lastBarTime,isAddon,openPrice,memoDir,volume,riskPerLot);
    }
 
    PrintDebug(isAddon?"Addon opened":"Base opened");
@@ -197,6 +328,9 @@ double CalcRiskLots(const double slPrice,const ENUM_ORDER_TYPE type,const bool i
       double cap = (lastBaseLots>0.0 ? lastBaseLots*0.5 : lots);
       lots=MathMin(lots,cap);
    }
+
+   double scale = MathMax(0.2,MathMin(1.0,gRiskScale));
+   lots *= scale;
 
    return lots;
 }
@@ -261,7 +395,11 @@ void ManagePosition(void)
    double volume=PositionGetDouble(POSITION_VOLUME);
 
    if(memoIndex<0)
-      UpsertMemo(ticket,MathAbs(openPrice-curSL)/point,atrPts,lastBarTime,false,openPrice,(type==POSITION_TYPE_BUY?1:-1));
+   {
+      double riskPtsTemp=MathAbs(openPrice-curSL)/point;
+      double riskPerLot=ComputeRiskPerLotValue(riskPtsTemp,point);
+      UpsertMemo(ticket,riskPtsTemp,atrPts,lastBarTime,false,openPrice,(type==POSITION_TYPE_BUY?1:-1),volume,riskPerLot);
+   }
 
    memoIndex=FindMemoIndex(ticket);
    double initialRiskPts = (memoIndex>=0 ? positionMemos[memoIndex].initialRiskPoints : MathAbs(openPrice-curSL)/point);
@@ -269,6 +407,8 @@ void ManagePosition(void)
       initialRiskPts=MathAbs(openPrice-curSL)/point;
    if(memoIndex>=0 && positionMemos[memoIndex].direction==0)
       positionMemos[memoIndex].direction=(type==POSITION_TYPE_BUY?1:-1);
+   if(memoIndex>=0)
+      positionMemos[memoIndex].lastKnownVolume = volume;
 
    double bid=0.0,ask=0.0;
    if(!GetBidAsk(bid,ask))
@@ -293,6 +433,44 @@ void ManagePosition(void)
    bool closeByAdx = (adxAvailable && adx<gConfig.minAdxH4);
    double progressPts = (type==POSITION_TYPE_BUY ? (mid-openPrice)/point : (openPrice-mid)/point);
    UpdateMemoExcursions(memoIndex,progressPts);
+   double rMultiple = ComputeRMultiple(memoIndex,progressPts);
+
+   int barsSinceEntry = BarsSinceEntry(ticket);
+   double maeAtr = GetMAEinATR(ticket);
+   bool reachedBE = ReachedBreakEven(ticket);
+
+   if(InpUseSoftStop && barsSinceEntry<=InpSoftStop_Bars && maeAtr>=InpSoftStop_MAE_ATR)
+   {
+      PrintDebug(StringFormat("SoftStop: MAE=%.2f ATR, bars=%d",maeAtr,barsSinceEntry));
+      if(trade.PositionClose(gConfig.symbol))
+      {
+         if(memoIndex>=0)
+            RecordCompletedTrade(positionMemos[memoIndex],progressPts);
+         RemoveMemo(ticket);
+         didPartialClose   = false;
+         addonsOpened      = 0;
+         lastBaseOpenPrice = 0.0;
+         lastBaseLots      = 0.0;
+      }
+      return;
+   }
+
+   if(InpUseTimeStop && HoursSinceEntry(ticket)>=InpTimeStop_Hours && !reachedBE)
+   {
+      PrintDebug(StringFormat("TimeStop: no BE after %d hours",InpTimeStop_Hours));
+      if(trade.PositionClose(gConfig.symbol))
+      {
+         if(memoIndex>=0)
+            RecordCompletedTrade(positionMemos[memoIndex],progressPts);
+         RemoveMemo(ticket);
+         didPartialClose   = false;
+         addonsOpened      = 0;
+         lastBaseOpenPrice = 0.0;
+         lastBaseLots      = 0.0;
+      }
+      return;
+   }
+
    if(closeByTrend || closeByAdx)
    {
       if(trade.PositionClose(gConfig.symbol))
@@ -327,7 +505,6 @@ void ManagePosition(void)
 
    if(gConfig.partialCloseEnable && !didPartialClose && gConfig.partialClosePct>0.0 && initialRiskPts>0.0)
    {
-      double rMultiple = progressPts/initialRiskPts;
       if(rMultiple>=gConfig.partialCloseR)
       {
          double minVol,maxVol,step;
@@ -339,9 +516,28 @@ void ManagePosition(void)
             if(closeVol>=minVol && closeVol<volume)
             {
                if(trade.PositionClosePartial(gConfig.symbol,closeVol))
+               {
                   didPartialClose=true;
+                  if(PositionSelect(gConfig.symbol) && memoIndex>=0)
+                     positionMemos[memoIndex].lastKnownVolume = PositionGetDouble(POSITION_VOLUME);
+                  if(InpUseRunnerTrail)
+                  {
+                     if(SetATRTrailing(ticket,InpRunner_ATR_mult))
+                        PrintDebug("Runner trail engaged");
+                     MarkRunnerMode(ticket,true);
+                  }
+               }
             }
          }
+      }
+   }
+
+   if(InpUseRunnerTrail && memoIndex>=0 && IsRunnerMode(ticket) && rMultiple>=2.5)
+   {
+      if(SetATRTrailing(ticket,gConfig.atrTrailMult))
+      {
+         MarkRunnerMode(ticket,false);
+         PrintDebug("Runner trail reverted to default");
       }
    }
 

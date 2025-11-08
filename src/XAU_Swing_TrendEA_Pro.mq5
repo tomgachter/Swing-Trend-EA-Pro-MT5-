@@ -8,6 +8,7 @@
 
 #include "modules/EAGlobals.mqh"
 #include "modules/MarketUtils.mqh"
+#include "modules/Accounting.mqh"
 #include "modules/TradeManagement.mqh"
 
 int OnInit()
@@ -43,6 +44,8 @@ int OnInit()
    }
 
    ResetDailyAnchors();
+   InitAccountingState();
+   UpdateAccounting();
    equityPeak = AccountInfoDouble(ACCOUNT_EQUITY);
    eqEMA      = equityPeak;
    lastValidAtrD1Pts = gConfig.atrD1Pivot;
@@ -68,6 +71,8 @@ void OnTick()
    if(equity>equityPeak)
       equityPeak=equity;
 
+   UpdateAccounting();
+
    if(gConfig.useEquityFilter)
    {
       double a=MathMax(0.0,MathMin(1.0,gConfig.eqEmaAlpha));
@@ -88,6 +93,14 @@ void OnTick()
 
    ManagePosition();
 
+   double minAdxThreshold = gConfig.minAdxH4;
+   double breakoutAtrFrac = InpBreakoutBufferATR;
+   if(!CanOpenNewTrade(minAdxThreshold,breakoutAtrFrac))
+   {
+      PrintDebug("Gate: adaptive guards");
+      return;
+   }
+
    if(!CoolingOffOk())
    {
       PrintDebug("Gate: cooling off");
@@ -98,6 +111,19 @@ void OnTick()
    {
       PrintDebug("Gate: session bias");
       return;
+   }
+
+   if(InpNoMondayMorning)
+   {
+      datetime adjusted=TimeCurrent()+gConfig.tzOffsetHours*3600;
+      MqlDateTime mtz;
+      TimeToStruct(adjusted,mtz);
+      int dow = mtz.day_of_week;
+      if(dow==1 && mtz.hour<12)
+      {
+         PrintDebug("Gate: Monday morning");
+         return;
+      }
    }
 
    if(!NewsFilterOk())
@@ -140,7 +166,7 @@ void OnTick()
    }
 
    double adx=0.0;
-   if(!ADX_OK(adx))
+   if(!ADX_OK(adx,minAdxThreshold))
    {
       PrintDebug("Gate: ADX");
       return;
@@ -159,7 +185,7 @@ void OnTick()
       return;
    }
 
-   if(gConfig.useSlopeFilter && !SlopeOkRelaxed(hEMA_E,gConfig.useClosedBarTrend?1:0,dir,adx))
+   if(gConfig.useSlopeFilter && !SlopeOkRelaxed(hEMA_E,gConfig.useClosedBarTrend?1:0,dir,adx,minAdxThreshold))
    {
       PrintDebug("Gate: slope");
       return;
@@ -230,7 +256,7 @@ void OnTick()
       double bufferPts=gConfig.breakoutBufferPts;
       if(atrReady)
       {
-         double atrBufferPts = InpBreakoutBufferATR*atrPts;
+         double atrBufferPts = breakoutAtrFrac*atrPts;
          bufferPts = MathMax(bufferPts,atrBufferPts);
       }
 
@@ -258,6 +284,11 @@ void OnTick()
 
    if(trigger)
       EnterTrade(orderType,false);
+}
+
+void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)
+{
+   HandleTradeAccounting(trans,request,result);
 }
 
 //+------------------------------------------------------------------+

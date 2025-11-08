@@ -64,7 +64,7 @@ input EntryMode         InpEntryMode          = ENTRY_HYBRID;            // Defa
 input int               InpDonchianBars_Base  = 16;                      // Default (XAUUSD, H1): base Donchian channel length
 input double            InpDonchianBars_MinMax= 10.0;                    // Default (XAUUSD, H1): min/max deviation from base
 input double            InpBreakoutBufferPts  = 6.0;                     // Default (XAUUSD, H1): breakout buffer in points
-input double            InpBreakoutBufferATR  = 0.10;                    // Default (XAUUSD, H1): breakout buffer as ATR fraction
+input double            InpBreakoutBufferATR  = 0.15;                    // Default (XAUUSD, H1): breakout buffer as ATR fraction
 
 //--- Regime controls
 input int               InpATR_D1_Period      = 14;                      // Default (XAUUSD, H1): ATR period for D1 regime
@@ -74,7 +74,7 @@ input double            InpATR_D1_Pivot       = 22000.0;                 // Defa
 input double            InpRegimeMinFactor    = 0.70;                    // Default (XAUUSD, H1): minimum scaling factor
 input double            InpRegimeMaxFactor    = 1.45;                    // Default (XAUUSD, H1): maximum scaling factor
 input int               InpADX_Period         = 14;                      // Default (XAUUSD, H1): ADX period (H4)
-input double            InpMinADX_H4          = 18.0;                    // Default (XAUUSD, H1): minimum ADX threshold
+input double            InpMinADX_H4          = 22.0;                    // Default (XAUUSD, H1): minimum ADX threshold
 
 //--- Stops and targets
 input int               InpATR_Period         = 14;                      // Default (XAUUSD, H1): ATR period for SL/TP (H4)
@@ -87,8 +87,8 @@ input BreakEvenMode     InpBreakEven_Mode     = BREAK_EVEN_R_BASED;      // Defa
 input double            InpBreakEven_ATR      = 1.0;                     // Default (XAUUSD, H1): ATR multiple for BE (if ATR mode)
 input double            InpBreakEven_R        = 1.0;                     // Default (XAUUSD, H1): R multiple for BE (if R-based)
 input bool              InpPartialClose_Enable= true;                    // Default (XAUUSD, H1): enable partial close
-input double            InpPartialClose_R     = 1.5;                     // Default (XAUUSD, H1): R multiple to trigger partial close
-input double            InpPartialClose_Pct   = 33.0;                    // Default (XAUUSD, H1): percentage closed at partial target
+input double            InpPartialClose_R     = 1.7;                     // Default (XAUUSD, H1): R multiple to trigger partial close
+input double            InpPartialClose_Pct   = 35.0;                    // Default (XAUUSD, H1): percentage closed at partial target
 input int               InpMaxHoldBars        = 48;                      // Default (XAUUSD, H1): maximum holding bars
 
 //--- Trailing options
@@ -101,11 +101,12 @@ input int               InpCooldownBars       = 1;                       // Defa
 input double            InpMaxExtension_ATR   = 2.0;                     // Default (XAUUSD, H1): maximum distance from EMA in ATR
 
 //--- Session filters
-input bool              InpUseSessionBias     = false;                   // Default (XAUUSD, H1): restrict entries to core sessions
-input int               InpSess1_StartHour    = 7;                       // Default (XAUUSD, H1): Session 1 start (UTC)
+input bool              InpUseSessionBias     = true;                    // Default (XAUUSD, H1): restrict entries to core sessions
+input int               InpSess1_StartHour    = 8;                       // Default (XAUUSD, H1): Session 1 start (UTC)
 input int               InpSess1_EndHour      = 12;                      // Default (XAUUSD, H1): Session 1 end (UTC)
 input int               InpSess2_StartHour    = 13;                      // Default (XAUUSD, H1): Session 2 start (UTC)
-input int               InpSess2_EndHour      = 21;                      // Default (XAUUSD, H1): Session 2 end (UTC)
+input int               InpSess2_EndHour      = 22;                      // Default (XAUUSD, H1): Session 2 end (UTC)
+input bool              InpNoMondayMorning    = true;                    // Default (XAUUSD, H1): skip Monday morning entries
 input int               InpTZ_OffsetHours     = 0;                       // Default (XAUUSD, H1): broker time offset vs UTC
 input bool              InpFlatOnFriday       = true;                    // Default (XAUUSD, H1): flat positions on Friday evening
 input string            InpFridayFlatTime     = "20:30";                 // Default (XAUUSD, H1): Friday flat time (HH:MM)
@@ -132,6 +133,32 @@ input bool              InpUseFixedLots       = false;                   // Defa
 input double            InpFixedLots          = 0.50;                    // Default (XAUUSD, H1): fixed lot size
 input double            InpRiskPerTradePct    = 0.50;                    // Default (XAUUSD, H1): risk per trade (% of balance)
 input int               InpMaxOpenPositions   = 2;                       // Default (XAUUSD, H1): maximum simultaneous positions
+
+//--- Monthly / weekly risk guards
+input bool              InpUseMonthlyGuards      = true;                 // Default (XAUUSD, H1): enable monthly guard rails
+input double            InpMTD_LossStopPct       = 1.5;                  // Default (XAUUSD, H1): stop trading after X% monthly loss
+input double            InpMTD_LossStop_R        = 6.0;                  // Default (XAUUSD, H1): stop trading after -R monthly
+input double            InpMTD_ProfitLockPct     = 3.0;                  // Default (XAUUSD, H1): lock profits after Y% monthly gain
+input double            InpMTD_ProfitLock_R      = 10.0;                 // Default (XAUUSD, H1): lock profits after +R monthly
+
+input bool              InpUseWeeklyCooling      = true;                 // Default (XAUUSD, H1): enable weekly cooling periods
+input double            InpWTD_LossStopPct       = 1.0;                  // Default (XAUUSD, H1): pause after X% weekly loss
+input int               InpMaxLosingDaysStreak   = 3;                    // Default (XAUUSD, H1): losing day streak trigger
+
+input bool              InpAdaptiveGatesWhenMTDNeg = true;               // Default (XAUUSD, H1): tighten gates when month negative
+input int               InpMTDNeg_ADX_Bonus      = 3;                    // Default (XAUUSD, H1): ADX bonus when MTD < 0
+input double            InpMTDNeg_BufferATR_Bonus= 0.03;                 // Default (XAUUSD, H1): Breakout buffer ATR bonus when MTD < 0
+
+//--- Soft stop and time stop controls
+input bool              InpUseSoftStop           = true;                 // Default (XAUUSD, H1): enable MAE-based soft stop
+input double            InpSoftStop_MAE_ATR      = 0.8;                  // Default (XAUUSD, H1): MAE threshold in ATR multiples
+input int               InpSoftStop_Bars         = 8;                    // Default (XAUUSD, H1): bars window for soft stop
+input bool              InpUseTimeStop           = true;                 // Default (XAUUSD, H1): enable time stop
+input int               InpTimeStop_Hours        = 24;                   // Default (XAUUSD, H1): hours without BE before closing
+
+//--- Partial / runner controls
+input double            InpRunner_ATR_mult       = 1.3;                  // Default (XAUUSD, H1): ATR multiple for runner trail
+input bool              InpUseRunnerTrail        = true;                 // Default (XAUUSD, H1): enable runner trailing after partial
 
 //--- Risk guards
 input double            InpDailyLossStopPct   = 3.0;                     // Default (XAUUSD, H1): daily loss guard (% of equity)
@@ -236,6 +263,16 @@ double              lastBaseLots          = 0.0;
 int                 addonsOpened          = 0;
 double              lastValidAtrD1Pts     = InpATR_D1_Pivot;   // Latest valid D1 ATR reading
 datetime            gCoolingOffUntil      = 0;
+datetime            gPauseUntil           = 0;                 // Global trading pause (UTC based)
+double              gDailyPnL             = 0.0;
+double              gWeeklyPnL            = 0.0;
+double              gMonthlyPnL           = 0.0;
+double              gMonthlyR             = 0.0;
+double              gRiskScale            = 1.0;
+int                 gLosingDaysStreak     = 0;
+int                 gCurrentDay           = -1;
+int                 gCurrentWeek          = -1;
+int                 gCurrentMonth         = -1;
 
 struct PositionMemo
 {
@@ -248,6 +285,10 @@ struct PositionMemo
    int               direction;
    double            bestFavourablePts;
    double            worstAdversePts;
+   double            initialVolume;
+   double            riskPerLot;
+   bool              runnerMode;
+   double            lastKnownVolume;
 };
 
 PositionMemo        positionMemos[];
@@ -436,7 +477,7 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.regimeMinFactor     = 0.70;
          settings.regimeMaxFactor     = 1.45;
          settings.adxPeriod           = 14;
-         settings.minAdxH4            = 18.0;
+         settings.minAdxH4            = 22.0;
          settings.atrPeriod           = 14;
          settings.atrSlMultBase       = 2.40;
          settings.atrTpMultBase       = 3.60;
@@ -445,19 +486,19 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.breakEvenAtr        = 1.0;
          settings.breakEvenR          = 1.0;
          settings.partialCloseEnable  = true;
-         settings.partialCloseR       = 1.5;
-         settings.partialClosePct     = 33.0;
+         settings.partialCloseR       = 1.7;
+         settings.partialClosePct     = 35.0;
          settings.maxHoldBars         = 48;
          settings.trailingMode        = TRAIL_CHANDELIER;
          settings.atrTrailMult        = 1.8;
          settings.fractalShiftBars    = 2;
          settings.cooldownBars        = 1;
          settings.maxExtensionAtr     = 2.0;
-         settings.useSessionBias      = false;
-         settings.sess1StartHour      = 7;
+         settings.useSessionBias      = true;
+         settings.sess1StartHour      = 8;
          settings.sess1EndHour        = 12;
          settings.sess2StartHour      = 13;
-         settings.sess2EndHour        = 21;
+         settings.sess2EndHour        = 22;
          settings.flatOnFriday        = InpFlatOnFriday;
          settings.fridayFlatMinutes   = ParseTimeToMinutes(InpFridayFlatTime);
          settings.useNewsFilter       = InpUseNewsFilter;
@@ -578,7 +619,8 @@ int FindMemoIndex(const ulong ticket)
    return -1;
 }
 
-void UpsertMemo(const ulong ticket,const double riskPts,const double atrPts,const datetime openTime,const bool isAddon,const double openPrice,const int direction)
+void UpsertMemo(const ulong ticket,const double riskPts,const double atrPts,const datetime openTime,const bool isAddon,
+                const double openPrice,const int direction,const double volume,const double riskPerLot)
 {
    int idx=FindMemoIndex(ticket);
    if(idx<0)
@@ -596,6 +638,10 @@ void UpsertMemo(const ulong ticket,const double riskPts,const double atrPts,cons
    positionMemos[idx].direction         = direction;
    positionMemos[idx].bestFavourablePts = 0.0;
    positionMemos[idx].worstAdversePts   = 0.0;
+    positionMemos[idx].initialVolume     = volume;
+    positionMemos[idx].riskPerLot        = riskPerLot;
+    positionMemos[idx].runnerMode        = false;
+    positionMemos[idx].lastKnownVolume   = volume;
 }
 
 void RemoveMemo(const ulong ticket)

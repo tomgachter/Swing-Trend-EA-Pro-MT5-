@@ -1,0 +1,164 @@
+#ifndef __EA_ACCOUNTING_MQH__
+#define __EA_ACCOUNTING_MQH__
+
+#include "EAGlobals.mqh"
+#include "MarketUtils.mqh"
+
+void InitAccountingState()
+{
+   gPauseUntil       = 0;
+   gDailyPnL         = 0.0;
+   gWeeklyPnL        = 0.0;
+   gMonthlyPnL       = 0.0;
+   gMonthlyR         = 0.0;
+   gRiskScale        = 1.0;
+   gLosingDaysStreak = 0;
+   gCurrentDay       = -1;
+   gCurrentWeek      = -1;
+   gCurrentMonth     = -1;
+}
+
+static datetime CurrentUTC()
+{
+   return TimeCurrent() - (datetime)(gConfig.tzOffsetHours*3600);
+}
+
+static int CurrentMonthId(const datetime whenUtc)
+{
+   MqlDateTime t;
+   TimeToStruct(whenUtc,t);
+   return t.year*100 + t.mon;
+}
+
+static int CurrentDaySerial(const datetime whenUtc)
+{
+   return (int)(whenUtc/86400);
+}
+
+static int CurrentIsoWeekId(const datetime whenUtc)
+{
+   MqlDateTime t;
+   TimeToStruct(whenUtc,t);
+   int wday = t.day_of_week;
+   if(wday==0)
+      wday=7;
+   datetime thursday = whenUtc + (4 - wday)*86400;
+   MqlDateTime th;
+   TimeToStruct(thursday,th);
+   int week = (th.day_of_year-1)/7 + 1;
+   return th.year*100 + week;
+}
+
+void UpdateAccounting()
+{
+   datetime nowUtc = CurrentUTC();
+   if(nowUtc<=0)
+      nowUtc = TimeCurrent();
+
+   int daySerial = CurrentDaySerial(nowUtc);
+   if(gCurrentDay==-1)
+      gCurrentDay = daySerial;
+   if(gCurrentWeek==-1)
+      gCurrentWeek = CurrentIsoWeekId(nowUtc);
+   if(gCurrentMonth==-1)
+      gCurrentMonth = CurrentMonthId(nowUtc);
+
+   if(daySerial!=gCurrentDay)
+   {
+      if(gDailyPnL<0.0)
+         gLosingDaysStreak++;
+      else
+         gLosingDaysStreak=0;
+      gDailyPnL=0.0;
+      gCurrentDay=daySerial;
+   }
+
+   int weekId = CurrentIsoWeekId(nowUtc);
+   if(weekId!=gCurrentWeek)
+   {
+      gWeeklyPnL=0.0;
+      gLosingDaysStreak=0;
+      gCurrentWeek=weekId;
+   }
+
+   int monthId = CurrentMonthId(nowUtc);
+   if(monthId!=gCurrentMonth)
+   {
+      gMonthlyPnL=0.0;
+      gMonthlyR = 0.0;
+      gPauseUntil=0;
+      gCurrentMonth=monthId;
+   }
+}
+
+static double ResolveRiskPerLot(const PositionMemo &memo)
+{
+   if(memo.riskPerLot>0.0)
+      return memo.riskPerLot;
+   double point=0.0,tickValue=0.0,tickSize=0.0;
+   if(!GetSymbolDouble(SYMBOL_POINT,point,"point") || point<=0.0)
+      return 0.0;
+   if(!GetSymbolDouble(SYMBOL_TRADE_TICK_VALUE,tickValue,"tick_value") || tickValue<=0.0)
+      return 0.0;
+   if(!GetSymbolDouble(SYMBOL_TRADE_TICK_SIZE,tickSize,"tick_size") || tickSize<=0.0)
+      return 0.0;
+   double riskPrice = memo.initialRiskPoints*point;
+   return (riskPrice/tickSize)*tickValue;
+}
+
+void HandleTradeAccounting(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)
+{
+   if(trans.type!=TRADE_TRANSACTION_DEAL_ADD)
+      return;
+
+   ulong deal=trans.deal;
+   if(deal==0)
+      return;
+
+   string symbol=HistoryDealGetString(deal,DEAL_SYMBOL);
+   if(symbol!=gConfig.symbol)
+      return;
+
+   long magic=HistoryDealGetInteger(deal,DEAL_MAGIC);
+   if(magic!=gConfig.magic)
+      return;
+
+   ENUM_DEAL_ENTRY entry=(ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal,DEAL_ENTRY);
+   if(entry!=DEAL_ENTRY_OUT && entry!=DEAL_ENTRY_INOUT && entry!=DEAL_ENTRY_OUT_BY)
+      return;
+
+   double profit = HistoryDealGetDouble(deal,DEAL_PROFIT);
+   double swap   = HistoryDealGetDouble(deal,DEAL_SWAP);
+   double commission = HistoryDealGetDouble(deal,DEAL_COMMISSION);
+   double netProfit = profit + swap + commission;
+
+   gDailyPnL  += netProfit;
+   gWeeklyPnL += netProfit;
+   gMonthlyPnL+= netProfit;
+
+   double volume = HistoryDealGetDouble(deal,DEAL_VOLUME);
+   if(volume<=0.0)
+      return;
+
+   ulong positionId = (ulong)HistoryDealGetInteger(deal,DEAL_POSITION_ID);
+   int memoIndex = FindMemoIndex(positionId);
+   double riskPerLot = 0.0;
+   if(memoIndex>=0)
+      riskPerLot = ResolveRiskPerLot(positionMemos[memoIndex]);
+
+   if(riskPerLot<=0.0)
+      return;
+
+   double riskValue = riskPerLot*volume;
+   if(riskValue<=0.0)
+      return;
+
+   gMonthlyR += netProfit/riskValue;
+}
+
+double R_MTD()
+{
+   return gMonthlyR;
+}
+
+#endif // __EA_ACCOUNTING_MQH__
