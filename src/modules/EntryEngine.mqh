@@ -33,32 +33,47 @@ private:
    double m_trailAtrMult;
    bool   m_randomize;
 
-   bool PullbackSignal(const int direction,MqlRates &barPrev,MqlRates &barPrev2,const double ema,const double atr,const bool relaxedMomentum)
+   bool PullbackSignal(const int direction,const MqlRates &barPrev,const MqlRates &barPrev2,const double ema,const double atr,
+                       const bool relaxedMomentum,const RegimeBucket bucket)
    {
-      const double bandMult = 0.6;
+      double bandMult = 0.6;
+      if(bucket==REGIME_LOW)
+         bandMult = 0.75;
+      else if(bucket==REGIME_HIGH)
+         bandMult = 0.5;
       double band = bandMult*atr;
+      double momentumThreshold = 0.55;
+      if(bucket==REGIME_LOW)
+         momentumThreshold = 0.4;
+      else if(bucket==REGIME_HIGH)
+         momentumThreshold = 0.5;
+      if(relaxedMomentum)
+         momentumThreshold *= 0.6;
+      double body = MathAbs(barPrev.close-barPrev.open);
+      bool momentumOk = (body >= momentumThreshold*atr) || relaxedMomentum;
       if(direction>0)
       {
          bool touched = (barPrev.low <= ema - band);
+         if(!touched && relaxedMomentum)
+            touched = (barPrev.low <= ema);
          bool closeAbove = (barPrev.close > ema);
-         bool momentum = (barPrev.close > barPrev.open) && ((barPrev.high-barPrev.low) >= 0.8*atr);
          bool priorDown = (barPrev2.close < barPrev2.open);
-         bool momentumOk = (relaxedMomentum ? true : momentum);
-         return touched && closeAbove && momentumOk && priorDown;
+         return touched && closeAbove && momentumOk && (priorDown || relaxedMomentum);
       }
       else if(direction<0)
       {
          bool touched = (barPrev.high >= ema + band);
+         if(!touched && relaxedMomentum)
+            touched = (barPrev.high >= ema);
          bool closeBelow = (barPrev.close < ema);
-         bool momentum = (barPrev.close < barPrev.open) && ((barPrev.high-barPrev.low) >= 0.8*atr);
          bool priorUp = (barPrev2.close > barPrev2.open);
-         bool momentumOk = (relaxedMomentum ? true : momentum);
-         return touched && closeBelow && momentumOk && priorUp;
+         return touched && closeBelow && momentumOk && (priorUp || relaxedMomentum);
       }
       return false;
    }
 
-   bool BreakoutSignal(const int direction,MqlRates &bars[],const int count,const double atr,const SessionWindow window)
+   bool BreakoutSignal(const int direction,MqlRates &bars[],const int count,const double atr,const SessionWindow window,
+                       const bool relaxedMomentum,const RegimeBucket bucket)
    {
       if(count<4)
          return false;
@@ -67,15 +82,27 @@ private:
       MqlRates barPrev = bars[1];
       double rangeHigh = -DBL_MAX;
       double rangeLow  = DBL_MAX;
-      for(int i=2;i<=4 && i<count;i++)
+      for(int i=2;i<=5 && i<count;i++)
       {
          rangeHigh = MathMax(rangeHigh,bars[i].high);
          rangeLow  = MathMin(rangeLow,bars[i].low);
       }
       double box = rangeHigh-rangeLow;
-      if(box<=0.0 || box>atr*0.7)
+      double maxBoxMult = 0.8;
+      if(bucket==REGIME_LOW)
+         maxBoxMult = 1.05;
+      else if(bucket==REGIME_HIGH)
+         maxBoxMult = 0.65;
+      if(box<=0.0 || box>atr*maxBoxMult)
          return false;
-      bool impulse = (MathAbs(barPrev.close-barPrev.open) >= 0.6*atr);
+      double impulseMult = 0.5;
+      if(bucket==REGIME_LOW)
+         impulseMult = 0.35;
+      else if(bucket==REGIME_HIGH)
+         impulseMult = 0.45;
+      bool impulse = (MathAbs(barPrev.close-barPrev.open) >= impulseMult*atr);
+      if(relaxedMomentum)
+         impulse = true;
       if(direction>0)
       {
          if(barPrev.close>rangeHigh && impulse)
@@ -132,13 +159,13 @@ public:
       MqlRates barPrev = bars[1];
       MqlRates barPrev2 = bars[2];
 
-      if(PullbackSignal(direction,barPrev,barPrev2,bias.EmaH1(),atr,relaxedMomentum))
+      if(PullbackSignal(direction,barPrev,barPrev2,bias.EmaH1(),atr,relaxedMomentum,signal.regime))
       {
          signal.valid = true;
          signal.direction = direction;
          signal.family = ENTRY_FAMILY_PULLBACK;
       }
-      else if(BreakoutSignal(direction,bars,count,atr,session))
+      else if(BreakoutSignal(direction,bars,count,atr,session,relaxedMomentum,signal.regime))
       {
          signal.valid = true;
          signal.direction = direction;
