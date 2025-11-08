@@ -355,7 +355,30 @@ bool EquityFilterOk(void)
 
    double equity=AccountInfoDouble(ACCOUNT_EQUITY);
    double limit = eqEMA*(1.0-gConfig.eqUnderwaterPct/100.0);
-   return (equity>=limit);
+   if(equity>=limit)
+      return true;
+
+   if(eqEMA<=0.0)
+      return false;
+
+   double allowedDrawdown = eqEMA - limit;
+   if(allowedDrawdown<=0.0)
+      return false;
+
+   double actualDrawdown = eqEMA - equity;
+   if(actualDrawdown<=0.0)
+      return true;
+
+   double maxBoostDrawdown = 1.5*allowedDrawdown;
+   if(actualDrawdown>maxBoostDrawdown)
+      return false;
+
+   double adx=0.0;
+   if(!CopyAt(hADX_H4,0,1,adx,"Equity boost ADX"))
+      return false;
+
+   double boostThreshold = gConfig.minAdxH4 + gConfig.eqBoostAdxDelta;
+   return (adx>=boostThreshold);
 }
 
 void GetRegimeFactors(const double atrD1pts,int &donchianBars,double &slMult,double &tpMult)
