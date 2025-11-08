@@ -5,18 +5,21 @@
 
 double R_MTD();
 
-datetime DateOfNextUTC00(void)
+datetime DateOfNextBrokerMidnight(void)
 {
-   datetime nowUtc = TimeGMT();
-   if(nowUtc<=0)
-      return TimeCurrent();
+   datetime nowServer = TimeCurrent();
+   MqlDateTime timeStruct;
+   TimeToStruct(nowServer,timeStruct);
 
-   long nowSeconds = (long)nowUtc;
-   long days       = nowSeconds/86400;
-   datetime nextUtc = (datetime)((days+1)*86400);
+   timeStruct.hour = 0;
+   timeStruct.min  = 0;
+   timeStruct.sec  = 0;
 
-   datetime serverOffset = TimeCurrent() - nowUtc;
-   return nextUtc + serverOffset;
+   datetime midnight = StructToTime(timeStruct);
+   if(midnight<=nowServer)
+      midnight += 24*60*60;
+
+   return midnight;
 }
 
 void PrintDebug(const string text)
@@ -163,7 +166,7 @@ bool RiskOK(double &dayLoss,double &dd)
 
    if(dayLoss>=gConfig.dailyLossStopPct)
    {
-      gCoolingOffUntil = DateOfNextUTC00();
+      gCoolingOffUntil = DateOfNextBrokerMidnight();
       return false;
    }
    if(dd>=gConfig.maxDrawdownPct)
@@ -197,12 +200,13 @@ bool RegimeOK(double &atrD1pts)
    return true;
 }
 
-bool ADX_OK(double &adxOut,const double minThreshold=gConfig.minAdxH4)
+bool ADX_OK(double &adxOut,const double minThreshold=-1.0)
 {
    adxOut=0.0;
    if(!CopyAt(hADX_H4,0,1,adxOut,"ADX"))
       return false;
-   return (adxOut>=minThreshold);
+   double threshold = (minThreshold>=0.0 ? minThreshold : gConfig.minAdxH4);
+   return (adxOut>=threshold);
 }
 
 bool DonchianHL(const string symbol,const ENUM_TIMEFRAMES tf,const int bars,double &hi,double &lo)
