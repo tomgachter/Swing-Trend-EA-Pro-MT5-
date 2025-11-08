@@ -271,10 +271,26 @@ bool SlopeOkRelaxed(const int handle,const int shift,const int dir,const double 
    if(!CopyAt(hATR_Entry,0,shift,atr,"Slope ATR") || atr<=0.0)
       return true;
 
+   double slopeMin = gConfig.slopeMin;
+   // Adjust slope sensitivity around the D1 ATR pivot using the latest valid reading.
+   double atrD1pts = lastValidAtrD1Pts;
+   if(atrD1pts>0.0)
+   {
+      double pivot = gConfig.atrD1Pivot;
+      if(pivot>0.0)
+      {
+         if(atrD1pts<pivot)
+            slopeMin += 0.05;
+         else if(atrD1pts>pivot)
+            slopeMin -= 0.05;
+      }
+   }
+   slopeMin = MathMax(0.05,MathMin(0.30,slopeMin));
+
    double slopeNorm = (emaNow-emaPrev)/(atr);
-   if(dir>0 && slopeNorm<gConfig.slopeMin)
+   if(dir>0 && slopeNorm<slopeMin)
       return (adxH4>=gConfig.minAdxH4+5.0);
-   if(dir<0 && -slopeNorm<gConfig.slopeMin)
+   if(dir<0 && -slopeNorm<slopeMin)
       return (adxH4>=gConfig.minAdxH4+5.0);
    return true;
 }
