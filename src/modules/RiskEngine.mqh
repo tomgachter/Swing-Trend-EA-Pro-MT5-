@@ -3,6 +3,7 @@
 
 #include "DailyGuard.mqh"
 #include "Sizer.mqh"
+#include "RegimeFilter.mqh"
 
 class RiskEngine
 {
@@ -12,9 +13,14 @@ private:
    double      m_equityPeak;
    RiskMode    m_riskMode;
    double      m_riskSetting;
+   bool        m_useDynamicRisk;
+   double      m_lowFactor;
+   double      m_normalFactor;
+   double      m_highFactor;
 
 public:
-   RiskEngine(): m_maxEquityDDPercent(12.0), m_equityPeak(0.0), m_riskMode(RISK_PERCENT_PER_TRADE), m_riskSetting(0.5)
+   RiskEngine(): m_maxEquityDDPercent(12.0), m_equityPeak(0.0), m_riskMode(RISK_PERCENT_PER_TRADE), m_riskSetting(0.5),
+                 m_useDynamicRisk(false), m_lowFactor(0.8), m_normalFactor(1.0), m_highFactor(1.2)
    {
    }
 
@@ -49,11 +55,27 @@ public:
       return (ddPercent >= m_maxEquityDDPercent);
    }
 
-   bool AllowNewTrade(const double stopPoints,PositionSizer &sizer,double &volume,double &riskPercent)
+   void SetDynamicRiskEnabled(const bool enabled)
+   {
+      m_useDynamicRisk = enabled;
+   }
+
+   bool AllowNewTrade(const double stopPoints,PositionSizer &sizer,RegimeFilter &regime,double &volume,double &riskPercent)
    {
       double balance = AccountInfoDouble(ACCOUNT_BALANCE);
       double riskAdjust = m_dailyGuard.RiskReductionFactor();
-      double lot = sizer.CalculateVolume(m_riskMode,m_riskSetting,stopPoints,balance,riskAdjust);
+      double effectiveSetting = m_riskSetting;
+      if(m_useDynamicRisk)
+      {
+         RegimeBucket bucket = regime.CurrentBucket();
+         double factor = m_normalFactor;
+         if(bucket==REGIME_HIGH)
+            factor = m_highFactor;
+         else if(bucket==REGIME_LOW)
+            factor = m_lowFactor;
+         effectiveSetting *= factor;
+      }
+      double lot = sizer.CalculateVolume(m_riskMode,effectiveSetting,stopPoints,balance,riskAdjust);
       SymbolContext ctx = sizer.Context();
       if(lot<ctx.minLot)
          return false;
@@ -65,7 +87,7 @@ public:
       }
       else
       {
-         riskPercent = m_riskSetting*riskAdjust;
+         riskPercent = effectiveSetting*riskAdjust;
       }
 
       if(!m_dailyGuard.AllowNewTrade(riskPercent))

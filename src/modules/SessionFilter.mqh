@@ -16,9 +16,39 @@ private:
    int      m_coreStart;
    int      m_coreEnd;
 
-public:
-   SessionFilter(): m_startMinutes(7*60), m_endMinutes(14*60+45), m_coreStart(8*60), m_coreEnd(11*60+30)
+   int ClampMinutes(const int minutes)
    {
+      int clamped = minutes;
+      clamped = MathMax(0,clamped);
+      clamped = MathMin(23*60+59,clamped);
+      return clamped;
+   }
+
+public:
+   SessionFilter()
+   {
+      Configure(7,0,14,45);
+   }
+
+   void Configure(const int startHour,const int startMinute,const int endHour,const int endMinute)
+   {
+      int start = ClampMinutes(startHour*60 + startMinute);
+      int end   = ClampMinutes(endHour*60 + endMinute);
+      if(end<start)
+         end = start;
+      m_startMinutes = start;
+      m_endMinutes   = end;
+
+      int coreStart = start + 60; // default one hour after session open
+      int coreEnd   = end - 180;  // default three hours before session close
+      if(coreEnd<coreStart)
+      {
+         int mid = (start + end)/2;
+         coreStart = MathMax(start,mid-60);
+         coreEnd   = MathMin(end,mid+60);
+      }
+      m_coreStart = ClampMinutes(coreStart);
+      m_coreEnd   = ClampMinutes(coreEnd);
    }
 
    bool AllowsEntry(const datetime time, SessionWindow &window)

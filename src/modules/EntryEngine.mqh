@@ -22,6 +22,7 @@ struct EntrySignal
    EntryFamily  family;
    SessionWindow session;
    RegimeBucket regime;
+   bool         fallbackRelaxed;
 };
 
 class EntryEngine
@@ -32,7 +33,7 @@ private:
    double m_trailAtrMult;
    bool   m_randomize;
 
-   bool PullbackSignal(const int direction,MqlRates &barPrev,MqlRates &barPrev2,const double ema,const double atr)
+   bool PullbackSignal(const int direction,MqlRates &barPrev,MqlRates &barPrev2,const double ema,const double atr,const bool relaxedMomentum)
    {
       const double bandMult = 0.6;
       double band = bandMult*atr;
@@ -42,7 +43,8 @@ private:
          bool closeAbove = (barPrev.close > ema);
          bool momentum = (barPrev.close > barPrev.open) && ((barPrev.high-barPrev.low) >= 0.8*atr);
          bool priorDown = (barPrev2.close < barPrev2.open);
-         return touched && closeAbove && momentum && priorDown;
+         bool momentumOk = (relaxedMomentum ? true : momentum);
+         return touched && closeAbove && momentumOk && priorDown;
       }
       else if(direction<0)
       {
@@ -50,7 +52,8 @@ private:
          bool closeBelow = (barPrev.close < ema);
          bool momentum = (barPrev.close < barPrev.open) && ((barPrev.high-barPrev.low) >= 0.8*atr);
          bool priorUp = (barPrev2.close > barPrev2.open);
-         return touched && closeBelow && momentum && priorUp;
+         bool momentumOk = (relaxedMomentum ? true : momentum);
+         return touched && closeBelow && momentumOk && priorUp;
       }
       return false;
    }
@@ -96,13 +99,24 @@ public:
       m_randomize = randomize;
    }
 
-   bool Evaluate(BiasEngine &bias,RegimeFilter &regime,const SessionWindow session,MqlRates &bars[],const int count,EntrySignal &signal)
+   void SetMultipliers(const double slMult,const double tpMult,const double trailMult)
+   {
+      if(slMult>0.0)
+         m_slAtrMult = slMult;
+      if(tpMult>0.0)
+         m_tpAtrMult = tpMult;
+      if(trailMult>0.0)
+         m_trailAtrMult = trailMult;
+   }
+
+   bool Evaluate(BiasEngine &bias,RegimeFilter &regime,const SessionWindow session,MqlRates &bars[],const int count,const bool relaxedMomentum,EntrySignal &signal)
    {
       signal.valid = false;
       signal.direction = 0;
       signal.family = ENTRY_FAMILY_NONE;
       signal.session = session;
       signal.regime = regime.CurrentBucket();
+      signal.fallbackRelaxed = relaxedMomentum;
 
       if(count<3)
          return false;
@@ -118,7 +132,7 @@ public:
       MqlRates barPrev = bars[1];
       MqlRates barPrev2 = bars[2];
 
-      if(PullbackSignal(direction,barPrev,barPrev2,bias.EmaH1(),atr))
+      if(PullbackSignal(direction,barPrev,barPrev2,bias.EmaH1(),atr,relaxedMomentum))
       {
          signal.valid = true;
          signal.direction = direction;
