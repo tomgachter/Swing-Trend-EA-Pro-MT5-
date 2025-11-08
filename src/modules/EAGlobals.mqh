@@ -64,7 +64,7 @@ input EntryMode         InpEntryMode          = ENTRY_HYBRID;            // Defa
 input int               InpDonchianBars_Base  = 16;                      // Default (XAUUSD, H1): base Donchian channel length
 input double            InpDonchianBars_MinMax= 10.0;                    // Default (XAUUSD, H1): min/max deviation from base
 input double            InpBreakoutBufferPts  = 6.0;                     // Default (XAUUSD, H1): breakout buffer in points
-input double            InpBreakoutBufferATR  = 0.15;                    // Default (XAUUSD, H1): breakout buffer as ATR fraction
+input double            InpBreakoutBufferATR  = 0.12;                    // Breakout buffer as ATR fraction
 
 //--- Regime controls
 input int               InpATR_D1_Period      = 14;                      // Default (XAUUSD, H1): ATR period for D1 regime
@@ -74,7 +74,7 @@ input double            InpATR_D1_Pivot       = 22000.0;                 // Defa
 input double            InpRegimeMinFactor    = 0.70;                    // Default (XAUUSD, H1): minimum scaling factor
 input double            InpRegimeMaxFactor    = 1.45;                    // Default (XAUUSD, H1): maximum scaling factor
 input int               InpADX_Period         = 14;                      // Default (XAUUSD, H1): ADX period (H4)
-input double            InpMinADX_H4          = 22.0;                    // Default (XAUUSD, H1): minimum ADX threshold
+input double            InpMinADX_H4          = 20.0;                    // Minimum ADX threshold
 
 //--- Stops and targets
 input int               InpATR_Period         = 14;                      // Default (XAUUSD, H1): ATR period for SL/TP (H4)
@@ -125,8 +125,8 @@ input double            InpAddonStep_ATR      = 1.0;                     // Defa
 //--- Equity filter
 input bool              InpUseEquityFilter    = true;                    // Default (XAUUSD, H1): enable equity curve filter
 input double            InpEqEMA_Alpha        = 0.06;                    // Default (XAUUSD, H1): EMA alpha for equity filter
-input double            InpEqUnderwaterPct    = 3.0;                     // Default (XAUUSD, H1): allowed equity drawdown vs EMA
-input double            InpEqBoostAdxDelta    = 5.0;                     // Default (XAUUSD, H1): ADX delta for equity re-entry boost
+input double            InpEqUnderwaterPct    = 5.0;                     // Allowed equity drawdown vs EMA
+input double            InpEqBoostAdxDelta    = 3.0;                     // ADX delta for equity re-entry boost
 
 //--- Position sizing and limits
 input bool              InpUseFixedLots       = false;                   // Default (XAUUSD, H1): use fixed lot size
@@ -141,13 +141,23 @@ input double            InpMTD_LossStop_R        = 6.0;                  // Defa
 input double            InpMTD_ProfitLockPct     = 3.0;                  // Default (XAUUSD, H1): lock profits after Y% monthly gain
 input double            InpMTD_ProfitLock_R      = 10.0;                 // Default (XAUUSD, H1): lock profits after +R monthly
 
-input bool              InpUseWeeklyCooling      = true;                 // Default (XAUUSD, H1): enable weekly cooling periods
-input double            InpWTD_LossStopPct       = 1.0;                  // Default (XAUUSD, H1): pause after X% weekly loss
-input int               InpMaxLosingDaysStreak   = 3;                    // Default (XAUUSD, H1): losing day streak trigger
+input int               InpMTD_MinTradesBeforeStop   = 5;                // Trades required before monthly stop engages
+input bool              InpUseWeeklyCooling      = true;                 // Enable weekly cooling periods
+input double            InpWTD_LossStopPct       = 1.0;                  // Pause after X% weekly loss
+input int               InpWTD_MinTradesBeforeStop   = 3;                // Trades required before weekly stop engages
+input int               InpMaxLosingDaysStreak   = 3;                    // Losing day streak trigger
+input bool              InpUseSoftThrottleWhenMTDNeg = true;             // Use soft throttle when MTD < 0
+input double            InpThrottle_RiskScale        = 0.5;              // Risk multiplier when month negative
+input int               InpThrottle_ADX_Bonus        = 2;                // ADX bonus when month negative
+input double            InpThrottle_BufferATR_Bonus  = 0.02;             // Buffer ATR bonus when month negative
 
-input bool              InpAdaptiveGatesWhenMTDNeg = true;               // Default (XAUUSD, H1): tighten gates when month negative
-input int               InpMTDNeg_ADX_Bonus      = 3;                    // Default (XAUUSD, H1): ADX bonus when MTD < 0
-input double            InpMTDNeg_BufferATR_Bonus= 0.03;                 // Default (XAUUSD, H1): Breakout buffer ATR bonus when MTD < 0
+input int               InpStartup_GraceDays         = 10;               // Days after start without MTD/WTD stops
+input int               InpMonth_GraceDays           = 7;                // Days after month start with softer guards
+input int               InpEq_MinTradesForFilter     = 5;                // Trades needed before equity filter is strict
+input int               InpMonth_MinTrades           = 4;                // Minimum trades by month mid-point
+input int               InpMonth_MidDay              = 15;               // Day of month to check activity floor
+input int               InpActivity_ADX_Reduction    = 2;                // ADX reduction when activity low
+input double            InpActivity_BufferATR_Red    = 0.02;             // Buffer ATR reduction when activity low
 
 //--- Soft stop and time stop controls
 input bool              InpUseSoftStop           = true;                 // Default (XAUUSD, H1): enable MAE-based soft stop
@@ -269,10 +279,13 @@ double              gWeeklyPnL            = 0.0;
 double              gMonthlyPnL           = 0.0;
 double              gMonthlyR             = 0.0;
 double              gRiskScale            = 1.0;
+int                 gTradesThisWeek       = 0;
+int                 gTradesThisMonth      = 0;
 int                 gLosingDaysStreak     = 0;
 int                 gCurrentDay           = -1;
 int                 gCurrentWeek          = -1;
 int                 gCurrentMonth         = -1;
+datetime            gStartupTime          = 0;
 
 struct PositionMemo
 {
@@ -438,8 +451,8 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.addonStepAtr        = 1.0;
          settings.useEquityFilter     = true;
          settings.eqEmaAlpha          = InpEqEMA_Alpha;
-         settings.eqUnderwaterPct     = 3.0;
-         settings.eqBoostAdxDelta     = 5.0;
+         settings.eqUnderwaterPct     = 5.0;
+         settings.eqBoostAdxDelta     = 3.0;
          settings.useFixedLots        = InpUseFixedLots;
          settings.fixedLots           = InpFixedLots;
          settings.riskPerTradePct     = 0.45;
@@ -477,7 +490,7 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.regimeMinFactor     = 0.70;
          settings.regimeMaxFactor     = 1.45;
          settings.adxPeriod           = 14;
-         settings.minAdxH4            = 22.0;
+         settings.minAdxH4            = 20.0;
          settings.atrPeriod           = 14;
          settings.atrSlMultBase       = 2.40;
          settings.atrTpMultBase       = 3.60;

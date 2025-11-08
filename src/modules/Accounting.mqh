@@ -12,6 +12,8 @@ void InitAccountingState()
    gMonthlyPnL       = 0.0;
    gMonthlyR         = 0.0;
    gRiskScale        = 1.0;
+   gTradesThisWeek   = 0;
+   gTradesThisMonth  = 0;
    gLosingDaysStreak = 0;
    gCurrentDay       = -1;
    gCurrentWeek      = -1;
@@ -44,45 +46,103 @@ int CurrentIsoWeekId(const datetime whenTime)
    return th.year*100 + week;
 }
 
+bool IsNewDayUTC(const datetime whenTime)
+{
+   int daySerial = CurrentDaySerial(whenTime);
+   if(gCurrentDay==-1)
+   {
+      gCurrentDay = daySerial;
+      return false;
+   }
+   if(daySerial!=gCurrentDay)
+   {
+      gCurrentDay = daySerial;
+      return true;
+   }
+   return false;
+}
+
+bool IsNewDayUTC()
+{
+   return IsNewDayUTC(TimeGMT());
+}
+
+bool IsNewWeekUTC(const datetime whenTime)
+{
+   int weekId = CurrentIsoWeekId(whenTime);
+   if(gCurrentWeek==-1)
+   {
+      gCurrentWeek = weekId;
+      return false;
+   }
+   if(weekId!=gCurrentWeek)
+   {
+      gCurrentWeek = weekId;
+      return true;
+   }
+   return false;
+}
+
+bool IsNewWeekUTC()
+{
+   return IsNewWeekUTC(TimeGMT());
+}
+
+bool IsNewMonthUTC(const datetime whenTime)
+{
+   int monthId = CurrentMonthId(whenTime);
+   if(gCurrentMonth==-1)
+   {
+      gCurrentMonth = monthId;
+      return false;
+   }
+   if(monthId!=gCurrentMonth)
+   {
+      gCurrentMonth = monthId;
+      return true;
+   }
+   return false;
+}
+
+bool IsNewMonthUTC()
+{
+   return IsNewMonthUTC(TimeGMT());
+}
+
 void UpdateAccounting()
 {
-   datetime nowServer = TimeCurrent();
-   if(nowServer<=0)
-      nowServer = TimeCurrent();
+   datetime nowUtc = TimeGMT();
+   if(nowUtc<=0)
+      nowUtc = TimeCurrent();
 
-   int daySerial = CurrentDaySerial(nowServer);
-   if(gCurrentDay==-1)
-      gCurrentDay = daySerial;
-   if(gCurrentWeek==-1)
-      gCurrentWeek = CurrentIsoWeekId(nowServer);
-   if(gCurrentMonth==-1)
-      gCurrentMonth = CurrentMonthId(nowServer);
+   bool newMonth = IsNewMonthUTC(nowUtc);
+   bool newWeek  = IsNewWeekUTC(nowUtc);
+   bool newDay   = IsNewDayUTC(nowUtc);
 
-   if(daySerial!=gCurrentDay)
+   if(newDay)
    {
       if(gDailyPnL<0.0)
          gLosingDaysStreak++;
       else
-         gLosingDaysStreak=0;
-      gDailyPnL=0.0;
-      gCurrentDay=daySerial;
+         gLosingDaysStreak = 0;
+      gDailyPnL = 0.0;
    }
 
-   int weekId = CurrentIsoWeekId(nowServer);
-   if(weekId!=gCurrentWeek)
+   if(newWeek)
    {
-      gWeeklyPnL=0.0;
-      gLosingDaysStreak=0;
-      gCurrentWeek=weekId;
+      gWeeklyPnL      = 0.0;
+      gTradesThisWeek = 0;
+      gLosingDaysStreak = 0;
+      gPauseUntil     = 0;
    }
 
-   int monthId = CurrentMonthId(nowServer);
-   if(monthId!=gCurrentMonth)
+   if(newMonth)
    {
-      gMonthlyPnL=0.0;
-      gMonthlyR = 0.0;
-      gPauseUntil=0;
-      gCurrentMonth=monthId;
+      gMonthlyPnL      = 0.0;
+      gMonthlyR        = 0.0;
+      gTradesThisMonth = 0;
+      gPauseUntil      = 0;
+      gRiskScale       = 1.0;
    }
 }
 
@@ -119,6 +179,18 @@ void HandleTradeAccounting(const MqlTradeTransaction &trans,const MqlTradeReques
       return;
 
    ENUM_DEAL_ENTRY entry=(ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal,DEAL_ENTRY);
+   double volume = HistoryDealGetDouble(deal,DEAL_VOLUME);
+
+   if(entry==DEAL_ENTRY_IN)
+   {
+      if(volume>0.0)
+      {
+         gTradesThisWeek++;
+         gTradesThisMonth++;
+      }
+      return;
+   }
+
    if(entry!=DEAL_ENTRY_OUT && entry!=DEAL_ENTRY_INOUT && entry!=DEAL_ENTRY_OUT_BY)
       return;
 
@@ -131,7 +203,6 @@ void HandleTradeAccounting(const MqlTradeTransaction &trans,const MqlTradeReques
    gWeeklyPnL += netProfit;
    gMonthlyPnL+= netProfit;
 
-   double volume = HistoryDealGetDouble(deal,DEAL_VOLUME);
    if(volume<=0.0)
       return;
 

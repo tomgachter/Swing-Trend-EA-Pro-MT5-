@@ -354,13 +354,17 @@ int AdjustedHour(const MqlDateTime &t)
    return hour;
 }
 
-bool EquityFilterOk(void)
+bool EquityFilterOk(const int dayOfMonth,const int tradesThisMonth)
 {
    if(!gConfig.useEquityFilter)
       return true;
 
    double equity=AccountInfoDouble(ACCOUNT_EQUITY);
-   double limit = eqEMA*(1.0-gConfig.eqUnderwaterPct/100.0);
+   double threshold = gConfig.eqUnderwaterPct;
+   if((dayOfMonth>0 && dayOfMonth<=InpMonth_GraceDays) || tradesThisMonth<InpEq_MinTradesForFilter)
+      threshold += 2.0;
+
+   double limit = eqEMA*(1.0-threshold/100.0);
    if(equity>=limit)
       return true;
 
@@ -383,7 +387,7 @@ bool EquityFilterOk(void)
    if(!CopyAt(hADX_H4,0,1,adx,"Equity boost ADX"))
       return false;
 
-   double boostThreshold = gConfig.minAdxH4 + gConfig.eqBoostAdxDelta;
+   double boostThreshold = gConfig.minAdxH4 + InpEqBoostAdxDelta;
    return (adx>=boostThreshold);
 }
 
@@ -452,58 +456,85 @@ bool NewsFilterOk(void)
    return true;
 }
 
-bool CanOpenNewTrade(double &minAdxThreshold,double &breakoutAtrFrac)
+bool CanOpenNewTrade(const double equity,const int dayOfMonth,const int tradesThisMonth,const int tradesThisWeek,
+                     const double monthlyPnL,const double weeklyPnL,const int losingDays,const datetime now,
+                     double &outMinAdx,double &outBufferAtr,double &outRiskScale)
 {
-   minAdxThreshold = gConfig.minAdxH4;
-   breakoutAtrFrac = InpBreakoutBufferATR;
+   outMinAdx    = gConfig.minAdxH4;
+   outBufferAtr = InpBreakoutBufferATR;
+   outRiskScale = 1.0;
 
-   if(TimeCurrent()<gPauseUntil)
+   if(now<gPauseUntil)
    {
-      PrintDebug("Guard: GlobalPauseActive");
+      PrintDebug("Guard: PauseUntil");
       return false;
    }
 
-   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
-   if(InpUseMonthlyGuards)
+   bool graceStartup = false;
+   if(gStartupTime>0)
    {
-      double equityPct = (equity>0.0 ? (gMonthlyPnL/MathMax(1.0,equity))*100.0 : 0.0);
-      double monthlyR  = R_MTD();
-      if((equity>0.0 && equityPct<=-InpMTD_LossStopPct) || (monthlyR<=-InpMTD_LossStop_R))
-      {
-         PrintDebug("Guard: MonthlyLossStop");
-         return false;
-      }
-
-      bool profitLock = (equity>0.0 && equityPct>=InpMTD_ProfitLockPct) || (monthlyR>=InpMTD_ProfitLock_R);
-      gRiskScale = (profitLock ? 0.5 : 1.0);
-      if(profitLock)
-         PrintDebug("Guard: MonthlyProfitLock");
-   }
-   else
-   {
-      gRiskScale = 1.0;
+      double graceSeconds = (double)InpStartup_GraceDays*86400.0;
+      if(graceSeconds>0.0 && (now-gStartupTime)<graceSeconds)
+         graceStartup = true;
    }
 
-   if(InpUseWeeklyCooling)
+   bool graceMonth = (dayOfMonth>0 && dayOfMonth<=InpMonth_GraceDays);
+
+   if(!graceStartup && InpUseWeeklyCooling)
    {
-      double weeklyPct = (equity>0.0 ? (gWeeklyPnL/MathMax(1.0,equity))*100.0 : 0.0);
-      bool lossHit = (equity>0.0 && weeklyPct<=-InpWTD_LossStopPct);
-      bool streakHit = (InpMaxLosingDaysStreak>0 && gLosingDaysStreak>=InpMaxLosingDaysStreak);
-      if(lossHit || streakHit)
+      if(tradesThisWeek>=InpWTD_MinTradesBeforeStop)
       {
-         gPauseUntil = TimeCurrent() + 24*60*60;
-         PrintDebug("Guard: WeeklyCooling");
-         return false;
+         double weeklyPct = (equity>0.0 ? (weeklyPnL/MathMax(1.0,equity))*100.0 : 0.0);
+         bool lossHit = (equity>0.0 && weeklyPct<=-InpWTD_LossStopPct);
+         bool streakHit = (InpMaxLosingDaysStreak>0 && losingDays>=InpMaxLosingDaysStreak);
+         if(lossHit || streakHit)
+         {
+            gPauseUntil = now + 24*60*60;
+            PrintDebug(StringFormat("Guard: WeeklyPause until %s",TimeToString(gPauseUntil,TIME_DATE|TIME_MINUTES)));
+            return false;
+         }
       }
    }
 
-   if(InpAdaptiveGatesWhenMTDNeg && gMonthlyPnL<0.0)
+   bool mtdNeg = (monthlyPnL<0.0);
+   if(!graceStartup && !graceMonth && InpUseMonthlyGuards)
    {
-      minAdxThreshold += InpMTDNeg_ADX_Bonus;
-      breakoutAtrFrac += InpMTDNeg_BufferATR_Bonus;
+      if(tradesThisMonth>=InpMTD_MinTradesBeforeStop)
+      {
+         double monthlyPct = (equity>0.0 ? (monthlyPnL/MathMax(1.0,equity))*100.0 : 0.0);
+         double monthlyR   = R_MTD();
+         if((equity>0.0 && monthlyPct<=-InpMTD_LossStopPct) || monthlyR<=-InpMTD_LossStop_R)
+         {
+            PrintDebug("Guard: MonthlyStop");
+            return false;
+         }
+      }
    }
 
-   gRiskScale = MathMax(0.2,MathMin(1.0,gRiskScale));
+   if(!graceStartup && !graceMonth && InpUseSoftThrottleWhenMTDNeg && mtdNeg)
+   {
+      outRiskScale = MathMax(0.2,MathMin(1.0,InpThrottle_RiskScale));
+      outMinAdx    = MathMax(5.0,outMinAdx + InpThrottle_ADX_Bonus);
+      outBufferAtr = MathMax(0.0,outBufferAtr + InpThrottle_BufferATR_Bonus);
+      PrintDebug(StringFormat("Guard: MTDThrottle rs=%.2f adx=%.2f buf=%.3f",outRiskScale,outMinAdx,outBufferAtr));
+   }
+
+   if(dayOfMonth>=InpMonth_MidDay && tradesThisMonth<InpMonth_MinTrades)
+   {
+      outMinAdx    = MathMax(5.0,outMinAdx - InpActivity_ADX_Reduction);
+      outBufferAtr = MathMax(0.0,outBufferAtr - InpActivity_BufferATR_Red);
+      PrintDebug(StringFormat("Guard: ActivityBoost adx=%.2f buf=%.3f",outMinAdx,outBufferAtr));
+   }
+
+   if(now<gPauseUntil)
+   {
+      PrintDebug("Guard: PauseUntil");
+      return false;
+   }
+
+   outRiskScale = MathMax(0.2,MathMin(1.0,outRiskScale));
+   outMinAdx    = MathMax(5.0,outMinAdx);
+   outBufferAtr = MathMax(0.0,outBufferAtr);
 
    return true;
 }
@@ -514,8 +545,9 @@ bool FridayFlatWindow(void)
       return false;
 
    datetime now=TimeCurrent();
+   datetime adjusted = now + gConfig.tzOffsetHours*3600;
    MqlDateTime t;
-   TimeToStruct(now,t);
+   TimeToStruct(adjusted,t);
    if(t.day_of_week!=5)
       return false;
 
