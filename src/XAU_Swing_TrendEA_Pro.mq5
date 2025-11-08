@@ -211,8 +211,25 @@ void OnTick()
       if(!DonchianHL(gConfig.symbol,gConfig.tfEntry,MathMax(2,donBars),hi,lo))
          return;
 
-      double buyTrig  = hi + gConfig.breakoutBufferPts*pt;
-      double sellTrig = lo - gConfig.breakoutBufferPts*pt;
+      double atrEntry=0.0;
+      double atrPts=0.0;
+      bool   atrReady=false;
+      if(CopyAt(hATR_Entry,0,1,atrEntry,"ATR breakout") && atrEntry>0.0)
+      {
+         atrPts = atrEntry/pt;
+         if(atrPts>0.0)
+            atrReady=true;
+      }
+
+      double bufferPts=gConfig.breakoutBufferPts;
+      if(atrReady)
+      {
+         double atrBufferPts = InpBreakoutBufferATR*atrPts;
+         bufferPts = MathMax(bufferPts,atrBufferPts);
+      }
+
+      double buyTrig  = hi + bufferPts*pt;
+      double sellTrig = lo - bufferPts*pt;
 
       if(dir>0 && ask>buyTrig)
          trigger=true;
