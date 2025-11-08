@@ -222,7 +222,7 @@ void HandleTradeAccounting(const MqlTradeTransaction &trans,const MqlTradeReques
    gMonthlyR += netProfit/riskValue;
 }
 
-double R_MTD()
+double R_MTD(void)
 {
    return gMonthlyR;
 }
