@@ -233,6 +233,7 @@ double              lastBaseOpenPrice     = 0.0;
 double              lastBaseLots          = 0.0;
 int                 addonsOpened          = 0;
 double              lastValidAtrD1Pts     = InpATR_D1_Pivot;   // Latest valid D1 ATR reading
+datetime            gCoolingOffUntil      = 0;
 
 struct PositionMemo
 {
