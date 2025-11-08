@@ -88,6 +88,12 @@ void OnTick()
 
    ManagePosition();
 
+   if(!CoolingOffOk())
+   {
+      PrintDebug("Gate: cooling off");
+      return;
+   }
+
    if(gConfig.useSessionBias && !SessionOk())
    {
       PrintDebug("Gate: session bias");

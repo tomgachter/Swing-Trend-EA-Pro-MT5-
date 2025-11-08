@@ -3,6 +3,20 @@
 
 #include "EAGlobals.mqh"
 
+datetime DateOfNextUTC00(void)
+{
+   datetime nowUtc = TimeGMT();
+   if(nowUtc<=0)
+      return TimeCurrent();
+
+   long nowSeconds = (long)nowUtc;
+   long days       = nowSeconds/86400;
+   datetime nextUtc = (datetime)((days+1)*86400);
+
+   datetime serverOffset = TimeCurrent() - nowUtc;
+   return nextUtc + serverOffset;
+}
+
 void PrintDebug(const string text)
 {
    if(gConfig.debug)
@@ -146,10 +160,18 @@ bool RiskOK(double &dayLoss,double &dd)
    dd      = 100.0*(equityPeak-equity)/MathMax(1.0,equityPeak);
 
    if(dayLoss>=gConfig.dailyLossStopPct)
+   {
+      gCoolingOffUntil = DateOfNextUTC00();
       return false;
+   }
    if(dd>=gConfig.maxDrawdownPct)
       return false;
    return true;
+}
+
+bool CoolingOffOk(void)
+{
+   return (TimeCurrent()>=gCoolingOffUntil);
 }
 
 bool RegimeOK(double &atrD1pts)
