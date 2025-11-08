@@ -32,7 +32,7 @@ private:
    double m_trailAtrMult;
    bool   m_randomize;
 
-   bool PullbackSignal(const int direction,const MqlRates &barPrev,const MqlRates &barPrev2,const double ema,const double atr)
+   bool PullbackSignal(const int direction,MqlRates &barPrev,MqlRates &barPrev2,const double ema,const double atr)
    {
       const double bandMult = 0.6;
       double band = bandMult*atr;
@@ -55,7 +55,7 @@ private:
       return false;
    }
 
-   bool BreakoutSignal(const int direction,const MqlRates bars[],const int count,const double atr,const SessionWindow window)
+   bool BreakoutSignal(const int direction,MqlRates &bars[],const int count,const double atr,const SessionWindow window)
    {
       if(count<4)
          return false;
@@ -96,7 +96,7 @@ public:
       m_randomize = randomize;
    }
 
-   bool Evaluate(BiasEngine &bias,RegimeFilter &regime,const SessionWindow session,MqlRates bars[],const int count,EntrySignal &signal)
+   bool Evaluate(BiasEngine &bias,RegimeFilter &regime,const SessionWindow session,MqlRates &bars[],const int count,EntrySignal &signal)
    {
       signal.valid = false;
       signal.direction = 0;

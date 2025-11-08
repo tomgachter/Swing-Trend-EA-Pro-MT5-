@@ -8,6 +8,7 @@
 
 #include <Trade\Trade.mqh>
 
+#include "modules/TesterCompat.mqh"
 #include "modules/RegimeFilter.mqh"
 #include "modules/SessionFilter.mqh"
 #include "modules/BiasEngine.mqh"
