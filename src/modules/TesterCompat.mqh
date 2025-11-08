@@ -86,6 +86,9 @@
 #ifndef STAT_EQUITY_DD_RELATIVE
    #define STAT_EQUITY_DD_RELATIVE     24
 #endif
+#ifndef STAT_EQUITY_DDRELATIVE
+   #define STAT_EQUITY_DDRELATIVE      STAT_EQUITY_DD_RELATIVE
+#endif
 #ifndef STAT_EXPECTED_PAYOFF
    #define STAT_EXPECTED_PAYOFF        25
 #endif
@@ -145,6 +148,12 @@
 #endif
 #ifndef STAT_LAST_TRADE_TIME
    #define STAT_LAST_TRADE_TIME        44
+#endif
+#ifndef STAT_AVG_HOLD_TIME
+   #define STAT_AVG_HOLD_TIME          45
+#endif
+#ifndef STAT_LINEAR_CORRELATION_EQUITY
+   #define STAT_LINEAR_CORRELATION_EQUITY 46
 #endif
 
 #endif  // TESTERCOMPAT_MQH

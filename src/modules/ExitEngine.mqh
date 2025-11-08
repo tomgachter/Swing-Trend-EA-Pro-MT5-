@@ -110,26 +110,28 @@ public:
       SymbolContext ctx = sizer.Context();
       for(int i=m_count-1;i>=0;i--)
       {
-         TradeMetadata &meta = m_positions[i];
-         if(!PositionSelectByTicket(meta.ticket))
+         if(!PositionSelectByTicket(m_positions[i].ticket))
             continue;
          double volume = PositionGetDouble(POSITION_VOLUME);
-         double currentPrice = (meta.direction>0 ? bid : ask);
-         meta.highWater = (meta.direction>0 ? MathMax(meta.highWater,currentPrice) : meta.highWater);
-         meta.lowWater  = (meta.direction<0 ? MathMin(meta.lowWater,currentPrice) : meta.lowWater);
+         double currentPrice = (m_positions[i].direction>0 ? bid : ask);
+         if(m_positions[i].direction>0)
+            m_positions[i].highWater = MathMax(m_positions[i].highWater,currentPrice);
+         else
+            m_positions[i].lowWater  = MathMin(m_positions[i].lowWater,currentPrice);
 
-         if(!meta.partialDone && volume>=2.0*ctx.minLot)
+         if(!m_positions[i].partialDone && volume>=2.0*ctx.minLot)
          {
-            if( (meta.direction>0 && currentPrice>=meta.partialLevel) || (meta.direction<0 && currentPrice<=meta.partialLevel) )
+            if( (m_positions[i].direction>0 && currentPrice>=m_positions[i].partialLevel) ||
+                (m_positions[i].direction<0 && currentPrice<=m_positions[i].partialLevel) )
             {
                double partialVolume = sizer.NormalizeVolume(volume*0.5);
                if(partialVolume>0.0 && partialVolume<volume)
                {
-                  if(broker.ClosePartial(meta.ticket,partialVolume))
+                  if(broker.ClosePartial(m_positions[i].ticket,partialVolume))
                   {
-                     double breakEven = meta.entryPrice;
-                     broker.ModifySL(meta.ticket,breakEven);
-                     meta.partialDone = true;
+                     double breakEven = m_positions[i].entryPrice;
+                     broker.ModifySL(m_positions[i].ticket,breakEven);
+                     m_positions[i].partialDone = true;
                   }
                }
             }
@@ -137,28 +139,28 @@ public:
 
          if(atr>0.0)
          {
-            double extreme = (meta.direction>0 ? meta.highWater : meta.lowWater);
-            double newSL = extreme - meta.direction*m_trailMultiplier*atr;
+            double extreme = (m_positions[i].direction>0 ? m_positions[i].highWater : m_positions[i].lowWater);
+            double newSL = extreme - m_positions[i].direction*m_trailMultiplier*atr;
             double currentSL = PositionGetDouble(POSITION_SL);
-            if(meta.direction>0)
+            if(m_positions[i].direction>0)
             {
-               if(newSL>currentSL && newSL<meta.entryPrice)
-                  broker.ModifySL(meta.ticket,newSL);
-               else if(meta.partialDone && newSL>currentSL)
-                  broker.ModifySL(meta.ticket,MathMax(newSL,meta.entryPrice));
+               if(newSL>currentSL && newSL<m_positions[i].entryPrice)
+                  broker.ModifySL(m_positions[i].ticket,newSL);
+               else if(m_positions[i].partialDone && newSL>currentSL)
+                  broker.ModifySL(m_positions[i].ticket,MathMax(newSL,m_positions[i].entryPrice));
             }
             else
             {
-               if(newSL<currentSL && newSL>meta.entryPrice)
-                  broker.ModifySL(meta.ticket,newSL);
-               else if(meta.partialDone && newSL<currentSL)
-                  broker.ModifySL(meta.ticket,MathMin(newSL,meta.entryPrice));
+               if(newSL<currentSL && newSL>m_positions[i].entryPrice)
+                  broker.ModifySL(m_positions[i].ticket,newSL);
+               else if(m_positions[i].partialDone && newSL<currentSL)
+                  broker.ModifySL(m_positions[i].ticket,MathMin(newSL,m_positions[i].entryPrice));
             }
          }
 
-         if(TimeCurrent()-meta.openTime >= (int)(m_timeCutoffHours*3600.0))
+         if(TimeCurrent()-m_positions[i].openTime >= (int)(m_timeCutoffHours*3600.0))
          {
-            broker.ClosePosition(meta.ticket);
+            broker.ClosePosition(m_positions[i].ticket);
             continue;
          }
       }
