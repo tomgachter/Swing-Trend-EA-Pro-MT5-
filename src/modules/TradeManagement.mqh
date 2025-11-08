@@ -173,7 +173,7 @@ double CalcRiskLots(const double slPrice,const ENUM_ORDER_TYPE type,const bool i
       return (isAddon ? MathMin(base*0.5,base) : base);
    }
 
-   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double balance = AccountInfoDouble(ACCOUNT_EQUITY);
    double riskAmt = balance*(gConfig.riskPerTradePct/100.0);
 
    double bid=0.0,ask=0.0;
