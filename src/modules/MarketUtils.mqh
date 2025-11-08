@@ -132,7 +132,7 @@ bool CopyCloseAt(const string symbol,const ENUM_TIMEFRAMES tf,const int shift,do
    return true;
 }
 
-bool SpreadOK(int &spread)
+bool SpreadOK(int &spread,const int limitOverride=-1)
 {
    spread=0;
    long raw=0;
@@ -150,7 +150,8 @@ bool SpreadOK(int &spread)
          spread=(int)MathRound(floatSpread);
       }
    }
-   return (spread<=gConfig.maxSpreadPoints);
+   int limit = (limitOverride>0 ? limitOverride : gConfig.maxSpreadPoints);
+   return (spread<=limit);
 }
 
 bool RiskOK(double &dayLoss,double &dd)

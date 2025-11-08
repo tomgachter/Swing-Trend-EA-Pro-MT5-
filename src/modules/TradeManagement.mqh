@@ -2,6 +2,8 @@
 #define __EA_TRADE_MANAGEMENT_MQH__
 
 #include "EAGlobals.mqh"
+#include "entries.mqh"
+#include "exits.mqh"
 
 int BarsSinceEntry(const ulong ticket)
 {
@@ -178,7 +180,7 @@ void RefreshPositionMemos(void)
    }
 }
 
-void EnterTrade(const ENUM_ORDER_TYPE type,const bool isAddon)
+void EnterTrade(const ENUM_ORDER_TYPE type,const bool isAddon,const EntrySignal &signal)
 {
    if(OpenPositionsByMagic()>=gConfig.maxOpenPositions)
       return;
@@ -191,17 +193,6 @@ void EnterTrade(const ENUM_ORDER_TYPE type,const bool isAddon)
    if(!GetBidAsk(bid,ask))
       return;
 
-   double atrD1pts=0.0;
-   if(!RegimeOK(atrD1pts))
-   {
-      PrintDebug("Enter: regime not ready");
-      return;
-   }
-
-   int donBars=0;
-   double slMult=0.0,tpMult=0.0;
-   GetRegimeFactors(atrD1pts,donBars,slMult,tpMult);
-
    double atr=0.0;
    if(!CopyAt(hATR_H4,0,0,atr,"ATR H4") || atr<=0.0)
    {
@@ -210,7 +201,18 @@ void EnterTrade(const ENUM_ORDER_TYPE type,const bool isAddon)
    }
 
    double atrPts=atr/point;
-   lastKnownAtrEntryPoints=atrPts;
+   lastKnownAtrEntryPoints=(signal.atrEntryPts>0.0?signal.atrEntryPts:atrPts);
+
+    double regimeAdj = (gRegime==REG_HIGH?1.10:(gRegime==REG_LOW?0.9:1.0));
+    double slMult = 2.2;
+    if(Aggressiveness<=0)
+       slMult = 2.5;
+    else if(Aggressiveness>=2)
+       slMult = 1.9;
+    slMult *= regimeAdj;
+    slMult = MathMax(1.6,MathMin(3.0,slMult));
+
+    double tpMult = (gPreset.useTP ? slMult*1.5 : 0.0);
 
    double price = (type==ORDER_TYPE_BUY ? ask : bid);
    double slPts = slMult*atrPts;
@@ -325,7 +327,10 @@ double CalcRiskLots(const double slPrice,const ENUM_ORDER_TYPE type,const bool i
    double lots = riskAmt / ((distance/tickSize)*tickValue);
    if(isAddon)
    {
-      double cap = (lastBaseLots>0.0 ? lastBaseLots*0.5 : lots);
+      double remaining = MathMax(0.0,(gPreset.addonMaxTotalRiskMult - (1.0+addonsOpened)));
+      if(remaining<=0.0)
+         return 0.0;
+      double cap = (lastBaseLots>0.0 ? lastBaseLots*MathMax(0.2,remaining) : lots*remaining);
       lots=MathMin(lots,cap);
    }
 
@@ -414,10 +419,14 @@ void ManagePosition(void)
    if(!GetBidAsk(bid,ask))
       return;
    double mid=(bid+ask)*0.5;
+   double emaEntry=0.0;
+   CopyAt(hEMA_E,0,1,emaEntry,"EMA manage entry");
 
    double adx=0.0;
    bool adxPass = ADX_OK(adx);
    bool adxAvailable = (adxPass || adx>0.0);
+   double adxPrev=0.0;
+   CopyAt(hADX_H4,0,2,adxPrev,"ADX prev manage");
    int trendDir = TrendDirection();
    bool confirmOk = HTFConfirmOk(trendDir);
 
@@ -439,7 +448,7 @@ void ManagePosition(void)
    double maeAtr = GetMAEinATR(ticket);
    bool reachedBE = ReachedBreakEven(ticket);
 
-   if(InpUseSoftStop && barsSinceEntry<=InpSoftStop_Bars && maeAtr>=InpSoftStop_MAE_ATR)
+   if(InpUseSoftStop && barsSinceEntry<=InpSoftStop_Bars && maeAtr>=InpSoftStop_MAE_ATR && ADXDeclining(adx,adxPrev))
    {
       PrintDebug(StringFormat("SoftStop: MAE=%.2f ATR, bars=%d",maeAtr,barsSinceEntry));
       if(trade.PositionClose(gConfig.symbol))
@@ -505,7 +514,8 @@ void ManagePosition(void)
 
    if(gConfig.partialCloseEnable && !didPartialClose && gConfig.partialClosePct>0.0 && initialRiskPts>0.0)
    {
-      if(rMultiple>=gConfig.partialCloseR)
+      bool isLong = (type==POSITION_TYPE_BUY);
+      if(ShouldTriggerPartial(rMultiple,adx,adxPrev,isLong,emaEntry,mid))
       {
          double minVol,maxVol,step;
          if(GetVolumeLimits(minVol,maxVol,step))
@@ -520,12 +530,11 @@ void ManagePosition(void)
                   didPartialClose=true;
                   if(PositionSelect(gConfig.symbol) && memoIndex>=0)
                      positionMemos[memoIndex].lastKnownVolume = PositionGetDouble(POSITION_VOLUME);
-                  if(InpUseRunnerTrail)
-                  {
-                     if(SetATRTrailing(ticket,InpRunner_ATR_mult))
-                        PrintDebug("Runner trail engaged");
+                  if(memoIndex>=0)
                      MarkRunnerMode(ticket,true);
-                  }
+                  double bePrice = BreakEvenPlus(openPrice,initialRiskPts,(type==POSITION_TYPE_BUY?1:-1));
+                  double curTP = PositionGetDouble(POSITION_TP);
+                  trade.PositionModify(gConfig.symbol,bePrice,curTP);
                }
             }
          }
@@ -620,7 +629,9 @@ void ManagePosition(void)
             if(highs[i]>extremeHigh) extremeHigh=highs[i];
             if(lows[i]<extremeLow)    extremeLow =lows[i];
          }
-         double trailDist=gConfig.atrTrailMult*atrPts*point;
+         bool isAddonMemo = (memoIndex>=0 && positionMemos[memoIndex].isAddon);
+         double trailK = RunnerTrailK(isAddonMemo);
+         double trailDist=trailK*atrPts*point;
          if(type==POSITION_TYPE_BUY)
          {
             double proposed=extremeHigh-trailDist;
@@ -675,31 +686,55 @@ void TryOpenAddonIfEligible(void)
    if(!GetBidAsk(bid,ask))
       return;
 
-   int trendDir=TrendDirection();
-   if(trendDir==0)
+   int memoIndex=FindMemoIndex((ulong)PositionGetInteger(POSITION_TICKET));
+   if(memoIndex<0)
       return;
 
-   double adxOut=0.0;
-   if(!ADX_OK(adxOut))
+   double baseRisk = positionMemos[memoIndex].initialRiskPoints;
+   if(baseRisk<=0.0)
       return;
-   if(adxOut < gConfig.minAdxH4 + 5.0)
+   double mfeR = positionMemos[memoIndex].bestFavourablePts/baseRisk;
+   double maeR = positionMemos[memoIndex].worstAdversePts/baseRisk;
+   if(mfeR<1.0 || maeR>0.6)
+      return;
+
+   double totalRiskMult = 1.0 + addonsOpened;
+   if(totalRiskMult>=gPreset.addonMaxTotalRiskMult)
+      return;
+
+   int votesUp=0,votesDown=0,dir=0;
+   if(!ComputeTrendVotes(dir,votesUp,votesDown))
+      return;
+
+   double adx=0.0;
+   if(!CopyAt(hADX_H4,0,1,adx,"ADX addon"))
+      return;
+   if(adx<gPreset.adxMin+2.0)
       return;
 
    int baseDir = (type==POSITION_TYPE_BUY ? +1 : -1);
-   if(trendDir!=baseDir)
+   if(dir!=baseDir)
       return;
 
-   double stepDist = gConfig.addonStepAtr*atrPts*point;
+   double stepDist = gPreset.addonStepATR*atrPts*point;
+
+   EntrySignal addonSignal;
+   addonSignal.direction = baseDir;
+   addonSignal.adxValue  = adx;
+   addonSignal.atrEntryPts = atrPts;
+   addonSignal.breakoutLevel = (baseDir>0?ask:bid);
 
    if(type==POSITION_TYPE_BUY)
    {
-      if((ask-lastBaseOpenPrice) >= (addonsOpened+1)*stepDist)
-         EnterTrade(ORDER_TYPE_BUY,true);
+      if((ask-lastBaseOpenPrice) < (addonsOpened+1)*stepDist)
+         return;
+      EnterTrade(ORDER_TYPE_BUY,true,addonSignal);
    }
    else if(type==POSITION_TYPE_SELL)
    {
-      if((lastBaseOpenPrice-bid) >= (addonsOpened+1)*stepDist)
-         EnterTrade(ORDER_TYPE_SELL,true);
+      if((lastBaseOpenPrice-bid) < (addonsOpened+1)*stepDist)
+         return;
+      EnterTrade(ORDER_TYPE_SELL,true,addonSignal);
    }
 }
 
