@@ -14,6 +14,7 @@ private:
    double          m_lastEmaH4;
    double          m_lastEmaD1;
    int             m_direction;
+   double          m_slopeThreshold;
 
    double Slope(const int handle,const ENUM_TIMEFRAMES tf,const double atr)
    {
@@ -31,9 +32,9 @@ private:
 
 public:
    BiasEngine(): m_symbol(_Symbol), m_handleH1(INVALID_HANDLE), m_handleH4(INVALID_HANDLE), m_handleD1(INVALID_HANDLE),
-                 m_lastEmaH1(0.0), m_lastEmaH4(0.0), m_lastEmaD1(0.0), m_direction(0)
-   {
-   }
+                 m_lastEmaH1(0.0), m_lastEmaH4(0.0), m_lastEmaD1(0.0), m_direction(0), m_slopeThreshold(0.05)
+  {
+  }
 
    bool Init(const string symbol)
    {
@@ -87,11 +88,11 @@ public:
       double slopeH1 = Slope(m_handleH1,PERIOD_H1,regime.AtrH1());
       double slopeH4 = Slope(m_handleH4,PERIOD_H4,regime.AtrH4());
       double slopeD1 = Slope(m_handleD1,PERIOD_D1,regime.AtrH4());
-      const double slopeThreshold = 0.05;
+      double threshold = MathMax(0.0,m_slopeThreshold);
 
-      if(votesLong>=2 && slopeH1>-slopeThreshold && slopeH4>-slopeThreshold && slopeD1>-slopeThreshold)
+      if(votesLong>=2 && slopeH1>-threshold && slopeH4>-threshold && slopeD1>-threshold)
          m_direction = 1;
-      else if(votesShort>=2 && slopeH1<slopeThreshold && slopeH4<slopeThreshold && slopeD1<slopeThreshold)
+      else if(votesShort>=2 && slopeH1<threshold && slopeH4<threshold && slopeD1<threshold)
          m_direction = -1;
       else
          m_direction = 0;
@@ -100,6 +101,10 @@ public:
 
    int Direction() { return m_direction; }
    double EmaH1() { return m_lastEmaH1; }
+   void SetSlopeThreshold(const double threshold)
+   {
+      m_slopeThreshold = (threshold>=0.0 ? threshold : 0.0);
+   }
 };
 
 #endif // __BIAS_ENGINE_MQH__
