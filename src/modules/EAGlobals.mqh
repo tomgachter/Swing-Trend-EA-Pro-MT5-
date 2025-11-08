@@ -125,6 +125,7 @@ input double            InpAddonStep_ATR      = 1.0;                     // Defa
 input bool              InpUseEquityFilter    = true;                    // Default (XAUUSD, H1): enable equity curve filter
 input double            InpEqEMA_Alpha        = 0.06;                    // Default (XAUUSD, H1): EMA alpha for equity filter
 input double            InpEqUnderwaterPct    = 3.0;                     // Default (XAUUSD, H1): allowed equity drawdown vs EMA
+input double            InpEqBoostAdxDelta    = 5.0;                     // Default (XAUUSD, H1): ADX delta for equity re-entry boost
 
 //--- Position sizing and limits
 input bool              InpUseFixedLots       = false;                   // Default (XAUUSD, H1): use fixed lot size
@@ -208,6 +209,7 @@ struct EAConfig
    bool              useEquityFilter;
    double            eqEmaAlpha;
    double            eqUnderwaterPct;
+   double            eqBoostAdxDelta;
    bool              useFixedLots;
    double            fixedLots;
    double            riskPerTradePct;
@@ -396,6 +398,7 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.useEquityFilter     = true;
          settings.eqEmaAlpha          = InpEqEMA_Alpha;
          settings.eqUnderwaterPct     = 3.0;
+         settings.eqBoostAdxDelta     = 5.0;
          settings.useFixedLots        = InpUseFixedLots;
          settings.fixedLots           = InpFixedLots;
          settings.riskPerTradePct     = 0.45;
@@ -467,6 +470,7 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.useEquityFilter     = InpUseEquityFilter;
          settings.eqEmaAlpha          = InpEqEMA_Alpha;
          settings.eqUnderwaterPct     = InpEqUnderwaterPct;
+         settings.eqBoostAdxDelta     = InpEqBoostAdxDelta;
          settings.useFixedLots        = InpUseFixedLots;
          settings.fixedLots           = InpFixedLots;
          settings.riskPerTradePct     = InpRiskPerTradePct;
@@ -544,6 +548,7 @@ void LoadInputsIntoConfig(EAConfig &settings)
    settings.useEquityFilter    = InpUseEquityFilter;
    settings.eqEmaAlpha         = InpEqEMA_Alpha;
    settings.eqUnderwaterPct    = InpEqUnderwaterPct;
+   settings.eqBoostAdxDelta    = InpEqBoostAdxDelta;
    settings.useFixedLots       = InpUseFixedLots;
    settings.fixedLots          = InpFixedLots;
    settings.riskPerTradePct    = InpRiskPerTradePct;
