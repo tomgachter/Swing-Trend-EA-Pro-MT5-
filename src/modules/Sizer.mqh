@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __SIZER_MQH__
+#define __SIZER_MQH__
 
 enum RiskMode
 {
@@ -36,26 +37,26 @@ public:
       return true;
    }
 
-   double NormalizeVolume(const double volume) const
+   double NormalizeVolume(const double volume)
    {
       double lots = MathFloor(volume/m_ctx.lotStep+0.5)*m_ctx.lotStep;
       lots = MathMax(m_ctx.minLot,MathMin(m_ctx.maxLot,lots));
       return lots;
    }
 
-   double StopDistancePoints(const double entry,const double stop) const
+   double StopDistancePoints(const double entry,const double stop)
    {
       return MathAbs(entry-stop)/m_ctx.point;
    }
 
-   double PipValuePerLot() const
+   double PipValuePerLot()
    {
       if(m_ctx.point<=0.0)
          return 0.0;
       return (m_ctx.tickValue/m_ctx.tickSize)*m_ctx.point;
    }
 
-   double CalculateVolume(const RiskMode mode,const double riskSetting,const double stopPoints,const double balance,const double riskAdjustment=1.0) const
+   double CalculateVolume(const RiskMode mode,const double riskSetting,const double stopPoints,const double balance,const double riskAdjustment=1.0)
    {
       if(stopPoints<=0.0)
          return 0.0;
@@ -76,5 +77,7 @@ public:
       return NormalizeVolume(volume);
    }
 
-   const SymbolContext &Context() const { return m_ctx; }
+   SymbolContext Context() { return m_ctx; }
 };
+
+#endif // __SIZER_MQH__

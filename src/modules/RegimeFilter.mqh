@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __REGIME_FILTER_MQH__
+#define __REGIME_FILTER_MQH__
 
 #include <Trade\Trade.mqh>
 
@@ -34,7 +35,7 @@ private:
       if(copied <= 50)
          return false;
       ArrayResize(buffer,copied);
-      ArraySort(buffer,WHOLE_ARRAY,0,MODE_ASCEND);
+      ArraySort(buffer);
       int lowIndex  = (int)MathMax(0,MathFloor(0.30*(copied-1)));
       int highIndex = (int)MathMax(0,MathFloor(0.70*(copied-1)));
       m_lowThreshold  = buffer[lowIndex];
@@ -69,12 +70,17 @@ public:
       if(!force && barTime==m_lastUpdateBarTime)
          return true;
 
-      double atrH1=0.0, atrH4=0.0;
-      if(CopyBuffer(m_handleH1,0,0,1,&atrH1)!=1)
+      double atrH1Buffer[];
+      ArrayResize(atrH1Buffer,1);
+      if(CopyBuffer(m_handleH1,0,0,1,atrH1Buffer)!=1)
          return false;
-      if(CopyBuffer(m_handleH4,0,0,1,&atrH4)!=1)
+      double atrH4Buffer[];
+      ArrayResize(atrH4Buffer,1);
+      if(CopyBuffer(m_handleH4,0,0,1,atrH4Buffer)!=1)
          return false;
 
+      double atrH1 = atrH1Buffer[0];
+      double atrH4 = atrH4Buffer[0];
       m_lastAtrH1 = atrH1;
       m_lastAtrH4 = atrH4;
       m_lastUpdateBarTime = barTime;
@@ -88,10 +94,12 @@ public:
       return true;
    }
 
-   RegimeBucket CurrentBucket() const { return m_currentBucket; }
+   RegimeBucket CurrentBucket() { return m_currentBucket; }
 
-   double AtrH1() const { return m_lastAtrH1; }
-   double AtrH4() const { return m_lastAtrH4; }
-   double LowThreshold() const { return m_lowThreshold; }
-   double HighThreshold() const { return m_highThreshold; }
+   double AtrH1() { return m_lastAtrH1; }
+   double AtrH4() { return m_lastAtrH4; }
+   double LowThreshold() { return m_lowThreshold; }
+   double HighThreshold() { return m_highThreshold; }
 };
+
+#endif // __REGIME_FILTER_MQH__

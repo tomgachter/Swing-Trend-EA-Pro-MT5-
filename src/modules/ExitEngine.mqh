@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __EXIT_ENGINE_MQH__
+#define __EXIT_ENGINE_MQH__
 
 #include "EntryEngine.mqh"
 #include "RegimeFilter.mqh"
@@ -101,11 +102,12 @@ public:
       return risk;
    }
 
-   void Manage(BrokerUtils &broker,const PositionSizer &sizer,const RegimeFilter &regime)
+   void Manage(BrokerUtils &broker,PositionSizer &sizer,RegimeFilter &regime)
    {
       double ask = SymbolInfoDouble(_Symbol,SYMBOL_ASK);
       double bid = SymbolInfoDouble(_Symbol,SYMBOL_BID);
       double atr = regime.AtrH1();
+      SymbolContext ctx = sizer.Context();
       for(int i=m_count-1;i>=0;i--)
       {
          TradeMetadata &meta = m_positions[i];
@@ -116,7 +118,7 @@ public:
          meta.highWater = (meta.direction>0 ? MathMax(meta.highWater,currentPrice) : meta.highWater);
          meta.lowWater  = (meta.direction<0 ? MathMin(meta.lowWater,currentPrice) : meta.lowWater);
 
-         if(!meta.partialDone && volume>=2.0*sizer.Context().minLot)
+         if(!meta.partialDone && volume>=2.0*ctx.minLot)
          {
             if( (meta.direction>0 && currentPrice>=meta.partialLevel) || (meta.direction<0 && currentPrice<=meta.partialLevel) )
             {
@@ -162,3 +164,5 @@ public:
       }
    }
 };
+
+#endif // __EXIT_ENGINE_MQH__

@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __SESSION_FILTER_MQH__
+#define __SESSION_FILTER_MQH__
 
 enum SessionWindow
 {
@@ -20,7 +21,7 @@ public:
    {
    }
 
-   bool AllowsEntry(const datetime time, SessionWindow &window) const
+   bool AllowsEntry(const datetime time, SessionWindow &window)
    {
       MqlDateTime dt;
       TimeToStruct(time,dt);
@@ -42,7 +43,7 @@ public:
       return true;
    }
 
-   bool IsLateSession(const datetime time) const
+   bool IsLateSession(const datetime time)
    {
       SessionWindow window;
       if(!AllowsEntry(time,window))
@@ -57,3 +58,5 @@ public:
       return false;
    }
 };
+
+#endif // __SESSION_FILTER_MQH__

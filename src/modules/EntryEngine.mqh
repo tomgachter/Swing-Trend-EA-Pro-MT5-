@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __ENTRY_ENGINE_MQH__
+#define __ENTRY_ENGINE_MQH__
 
 #include "BiasEngine.mqh"
 #include "SessionFilter.mqh"
@@ -31,7 +32,7 @@ private:
    double m_trailAtrMult;
    bool   m_randomize;
 
-   bool PullbackSignal(const int direction,const MqlRates &barPrev,const MqlRates &barPrev2,const double ema,const double atr) const
+   bool PullbackSignal(const int direction,const MqlRates &barPrev,const MqlRates &barPrev2,const double ema,const double atr)
    {
       const double bandMult = 0.6;
       double band = bandMult*atr;
@@ -54,7 +55,7 @@ private:
       return false;
    }
 
-   bool BreakoutSignal(const int direction,const MqlRates bars[],const int count,const double atr,const SessionWindow window) const
+   bool BreakoutSignal(const int direction,const MqlRates bars[],const int count,const double atr,const SessionWindow window)
    {
       if(count<4)
          return false;
@@ -95,7 +96,7 @@ public:
       m_randomize = randomize;
    }
 
-   bool Evaluate(const BiasEngine &bias,const RegimeFilter &regime,const SessionWindow session,MqlRates bars[],const int count,EntrySignal &signal)
+   bool Evaluate(BiasEngine &bias,RegimeFilter &regime,const SessionWindow session,MqlRates bars[],const int count,EntrySignal &signal)
    {
       signal.valid = false;
       signal.direction = 0;
@@ -149,7 +150,9 @@ public:
       return true;
    }
 
-   double TrailMultiplier() const { return m_trailAtrMult; }
-   double StopMultiplier() const { return m_slAtrMult; }
-   double PartialMultiplier() const { return m_tpAtrMult; }
+   double TrailMultiplier() { return m_trailAtrMult; }
+   double StopMultiplier() { return m_slAtrMult; }
+   double PartialMultiplier() { return m_tpAtrMult; }
 };
+
+#endif // __ENTRY_ENGINE_MQH__
