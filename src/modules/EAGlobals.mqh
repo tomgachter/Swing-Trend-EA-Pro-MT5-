@@ -229,6 +229,8 @@ struct EAConfig
    bool              partialCloseEnable;
    double            partialCloseR;
    double            partialClosePct;
+   bool              useTimeStop;
+   int               timeStopHours;
    int               maxHoldBars;
    TrailingMode      trailingMode;
    double            atrTrailMult;
@@ -440,6 +442,8 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.partialCloseEnable  = true;
          settings.partialCloseR       = 1.40;
          settings.partialClosePct     = 33.0;
+         settings.useTimeStop         = InpUseTimeStop;
+         settings.timeStopHours       = InpTimeStop_Hours;
          settings.maxHoldBars         = 60;
          settings.trailingMode        = TRAIL_CHANDELIER;
          settings.atrTrailMult        = 1.9;
@@ -512,6 +516,8 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
          settings.partialCloseEnable  = true;
          settings.partialCloseR       = 1.7;
          settings.partialClosePct     = 35.0;
+         settings.useTimeStop         = InpUseTimeStop;
+         settings.timeStopHours       = InpTimeStop_Hours;
          settings.maxHoldBars         = 48;
          settings.trailingMode        = TRAIL_CHANDELIER;
          settings.atrTrailMult        = 1.8;
@@ -589,6 +595,8 @@ void LoadInputsIntoConfig(EAConfig &settings)
    settings.partialCloseEnable = InpPartialClose_Enable;
    settings.partialCloseR      = InpPartialClose_R;
    settings.partialClosePct    = InpPartialClose_Pct;
+   settings.useTimeStop        = InpUseTimeStop;
+   settings.timeStopHours      = InpTimeStop_Hours;
    settings.maxHoldBars        = InpMaxHoldBars;
    settings.trailingMode       = InpTrailingMode;
    settings.atrTrailMult       = InpATR_Trail_mult;

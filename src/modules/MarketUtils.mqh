@@ -4,8 +4,6 @@
 #include "EAGlobals.mqh"
 #include "utils.mqh"
 
-double R_MTD(void);
-
 datetime DateOfNextBrokerMidnight(void)
 {
    datetime nowServer = TimeCurrent();
@@ -498,7 +496,7 @@ bool CanOpenNewTrade(const double equity,const int dayOfMonth,const int tradesTh
       if(tradesThisMonth>=InpMTD_MinTradesBeforeStop)
       {
          double monthlyPct = (equity>0.0 ? (monthlyPnL/MathMax(1.0,equity))*100.0 : 0.0);
-         double monthlyR   = R_MTD();
+         double monthlyR   = gMonthlyR;
          if((equity>0.0 && monthlyPct<=-InpMTD_LossStopPct) || monthlyR<=-InpMTD_LossStop_R)
          {
             PrintDebug("Guard: MonthlyStop");
