@@ -4,11 +4,17 @@
 //+------------------------------------------------------------------+
 #property strict
 
+#define EA_DEBUG 1
+
 #include "modules/TesterCompat.mqh"
 
 #include "modules/EAGlobals.mqh"
+#include "modules/utils.mqh"
 #include "modules/MarketUtils.mqh"
 #include "modules/Accounting.mqh"
+#include "modules/riskguards.mqh"
+#include "modules/entries.mqh"
+#include "modules/exits.mqh"
 #include "modules/TradeManagement.mqh"
 
 void ReportMonthlyPerformance(void);
@@ -19,6 +25,24 @@ int OnInit()
 {
    gStartupTime = TimeCurrent();
    ApplyPreset(InpPresetSelection);
+   gRegime      = DetectRegime();
+   gRiskProfile = MakeRiskGuardProfile(RiskGuardsPreset);
+   gPreset      = MakePreset(Aggressiveness,gRegime,RiskGuardsPreset);
+   gConfig.riskPerTradePct  = RiskPct;
+   gConfig.minAdxH4         = gPreset.adxMin;
+   gConfig.trendVotesRequired = gPreset.votesRequired;
+   gConfig.allowPyramiding  = Pyramiding;
+   gConfig.maxOpenPositions = MaxOpenPositions;
+   gConfig.maxAddonsPerBase = gPreset.maxAddons;
+   gConfig.addonStepAtr     = gPreset.addonStepATR;
+   gConfig.useEquityFilter  = gPreset.useEquityFilter;
+   gConfig.partialCloseEnable = gPreset.usePartial;
+   gConfig.partialClosePct    = gPreset.partialPct;
+   gConfig.partialCloseR      = gPreset.partialAtR;
+   gConfig.useTimeStop        = gPreset.useTimeStop;
+   gConfig.timeStopHours      = gPreset.timeStopHours;
+   gConfig.useSessionBias     = gPreset.useSessionBias;
+   gConfig.trailingMode       = TRAIL_CHANDELIER;
    trade.SetExpertMagicNumber(gConfig.magic);
 
    if(!SymbolSelect(gConfig.symbol,true))
@@ -55,6 +79,9 @@ int OnInit()
    eqEMA      = equityPeak;
    lastValidAtrD1Pts = gConfig.atrD1Pivot;
 
+   ConfigureEquityFilter(gPreset,gRiskProfile,gRegime,Aggressiveness);
+   PrintDebug(StringFormat("Init regime=%s votes=%d adx=%.1f risk=%.2f%%",EnumToString(gRegime),gPreset.votesRequired,gPreset.adxMin,RiskPct));
+
    PrintDebug("XAU_Swing_TrendEA_Pro initialised");
    return INIT_SUCCEEDED;
 }
@@ -78,14 +105,11 @@ void OnTick()
 
    UpdateAccounting();
 
-   if(gConfig.useEquityFilter)
-   {
-      double a=MathMax(0.0,MathMin(1.0,gConfig.eqEmaAlpha));
-      if(eqEMA<=0.0)
-         eqEMA=equity;
-      else
-         eqEMA = a*equity + (1.0-a)*eqEMA;
-   }
+   double a=MathMax(0.0,MathMin(1.0,gConfig.eqEmaAlpha));
+   if(eqEMA<=0.0)
+      eqEMA=equity;
+   else
+      eqEMA = a*equity + (1.0-a)*eqEMA;
 
    if(!IsNewBar(gConfig.tfEntry))
    {
@@ -96,53 +120,27 @@ void OnTick()
    if((int)(TimeCurrent()/86400)!=daySerialAnchor)
       ResetDailyAnchors();
 
+   double atrD1=iATR(gConfig.symbol,PERIOD_D1,14,0);
+   double point=SafePoint();
+   if(atrD1>0.0 && point>0.0)
+      lastValidAtrD1Pts = atrD1/point;
+
+   gRegime = DetectRegime();
+   gPreset = MakePreset(Aggressiveness,gRegime,RiskGuardsPreset);
+   gConfig.minAdxH4 = gPreset.adxMin;
+   gConfig.trendVotesRequired = gPreset.votesRequired;
+   gConfig.maxAddonsPerBase = gPreset.maxAddons;
+   gConfig.addonStepAtr     = gPreset.addonStepATR;
+   gConfig.partialCloseEnable = gPreset.usePartial;
+   gConfig.partialClosePct    = gPreset.partialPct;
+   gConfig.partialCloseR      = gPreset.partialAtR;
+   gConfig.useTimeStop        = gPreset.useTimeStop;
+   gConfig.timeStopHours      = gPreset.timeStopHours;
+   gConfig.useEquityFilter    = gPreset.useEquityFilter;
+   gConfig.useSessionBias     = gPreset.useSessionBias;
+   ConfigureEquityFilter(gPreset,gRiskProfile,gRegime,Aggressiveness);
+
    ManagePosition();
-
-   datetime now = TimeCurrent();
-   datetime adjusted = now + gConfig.tzOffsetHours*3600;
-   MqlDateTime localStruct;
-   TimeToStruct(adjusted,localStruct);
-   int dayOfMonth = localStruct.day;
-
-   double minAdxThreshold = gConfig.minAdxH4;
-   double breakoutAtrFrac = InpBreakoutBufferATR;
-   double guardRiskScale   = 1.0;
-   if(!CanOpenNewTrade(equity,dayOfMonth,gTradesThisMonth,gTradesThisWeek,gMonthlyPnL,gWeeklyPnL,
-                       gLosingDaysStreak,now,minAdxThreshold,breakoutAtrFrac,guardRiskScale))
-   {
-      PrintDebug("Gate: Guard");
-      return;
-   }
-
-   gRiskScale = MathMax(0.2,MathMin(1.0,guardRiskScale));
-
-   if(!CoolingOffOk())
-   {
-      PrintDebug("Gate: CoolingOff");
-      return;
-   }
-
-   if(gConfig.useSessionBias && !SessionOk())
-   {
-      PrintDebug("Gate: Session");
-      return;
-   }
-
-   if(InpNoMondayMorning)
-   {
-      int dow = localStruct.day_of_week;
-      if(dow==1 && localStruct.hour<12)
-      {
-      PrintDebug("Gate: MondayMorning");
-      return;
-   }
-   }
-
-   if(!NewsFilterOk())
-   {
-      PrintDebug("Gate: News");
-      return;
-   }
 
    if(FridayFlatWindow())
    {
@@ -150,152 +148,34 @@ void OnTick()
       return;
    }
 
-   int spread=0;
-   if(!SpreadOK(spread))
-   {
-      PrintDebug(StringFormat("Gate: Spread=%d",spread));
+   double riskScale=1.0;
+   if(!RiskGuardsAllowTrade(gPreset,gRiskProfile,gRegime,Aggressiveness,riskScale))
       return;
-   }
+   gRiskScale = riskScale;
 
-   double dayLoss,dd;
-   if(!RiskOK(dayLoss,dd))
-   {
-      PrintDebug(StringFormat("Gate: Risk DL=%.2f DD=%.2f",dayLoss,dd));
+   if(!EquityFilterAllowsTrade())
       return;
-   }
-
-   if(gConfig.useEquityFilter && !EquityFilterOk(dayOfMonth,gTradesThisMonth))
-   {
-      PrintDebug("Gate: EqFilter");
-      return;
-   }
-
-   double atrD1pts=0.0;
-   if(!RegimeOK(atrD1pts))
-   {
-      PrintDebug("Gate: regime");
-      return;
-   }
-
-   double adx=0.0;
-   if(!ADX_OK(adx,minAdxThreshold))
-   {
-      PrintDebug("Gate: ADX");
-      return;
-   }
-
-   int dir=TrendDirection();
-   if(dir==0)
-   {
-      PrintDebug("Gate: Trend");
-      return;
-   }
-
-   if(!HTFConfirmOk(dir))
-   {
-      PrintDebug("Gate: HTFConfirm");
-      return;
-   }
-
-   if(gConfig.useSlopeFilter && !SlopeOkRelaxed(hEMA_E,gConfig.useClosedBarTrend?1:0,dir,adx,minAdxThreshold))
-   {
-      PrintDebug("Gate: Slope");
-      return;
-   }
-
-   double distATR=0.0;
-   if(!ExtensionOk(distATR))
-   {
-      PrintDebug(StringFormat("Gate: Extension=%.2fATR",distATR));
-      return;
-   }
 
    if(!CooldownOk())
+      return;
+
+   int spreadLimit = gConfig.maxSpreadPoints;
+   if(gRegime==REG_HIGH)
+      spreadLimit = (int)MathRound(spreadLimit*1.25);
+   int spread=0;
+   if(!SpreadOK(spread,spreadLimit))
    {
-      PrintDebug("Gate: Cooldown");
+      PrintDebug(StringFormat("Gate: Spread=%d limit=%d",spread,spreadLimit));
       return;
    }
 
-   if(OpenPositionsByMagic()>=gConfig.maxOpenPositions)
-   {
-      PrintDebug("Gate: MaxPositions");
-      return;
-   }
-
-   int donBars=0;
-   double slMult=0.0,tpMult=0.0;
-   GetRegimeFactors(atrD1pts,donBars,slMult,tpMult);
-
-   double pt=0.0;
-   if(!GetSymbolDouble(SYMBOL_POINT,pt,"point") || pt<=0.0)
+   EntrySignal signal;
+   if(!BuildEntrySignal(signal))
       return;
 
-   double bid=0.0,ask=0.0;
-   if(!GetBidAsk(bid,ask))
-      return;
-
-   bool trigger=false;
-   ENUM_ORDER_TYPE orderType = (dir>0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
-
-   if(gConfig.entryMode==ENTRY_PULLBACK)
-   {
-      double ema1,ema2,c1,c2;
-      if(!CopyAt(hEMA_E,0,1,ema1,"EMA entry") || !CopyAt(hEMA_E,0,2,ema2,"EMA entry") ||
-         !CopyCloseAt(gConfig.symbol,gConfig.tfEntry,1,c1,"Close pullback") || !CopyCloseAt(gConfig.symbol,gConfig.tfEntry,2,c2,"Close pullback"))
-         return;
-
-      if(dir>0 && c2<ema2 && c1>ema1)
-         trigger=true;
-      if(dir<0 && c2>ema2 && c1<ema1)
-         trigger=true;
-   }
-   else if(gConfig.entryMode==ENTRY_BREAKOUT || gConfig.entryMode==ENTRY_HYBRID)
-   {
-      double hi,lo;
-      if(!DonchianHL(gConfig.symbol,gConfig.tfEntry,MathMax(2,donBars),hi,lo))
-         return;
-
-      double atrEntry=0.0;
-      double atrPts=0.0;
-      bool   atrReady=false;
-      if(CopyAt(hATR_Entry,0,1,atrEntry,"ATR breakout") && atrEntry>0.0)
-      {
-         atrPts = atrEntry/pt;
-         if(atrPts>0.0)
-            atrReady=true;
-      }
-
-      double bufferPts=gConfig.breakoutBufferPts;
-      if(atrReady)
-      {
-         double atrBufferPts = breakoutAtrFrac*atrPts;
-         bufferPts = MathMax(bufferPts,atrBufferPts);
-      }
-
-      double buyTrig  = hi + bufferPts*pt;
-      double sellTrig = lo - bufferPts*pt;
-
-      if(dir>0 && ask>buyTrig)
-         trigger=true;
-      if(dir<0 && bid<sellTrig)
-         trigger=true;
-
-      if(!trigger && gConfig.entryMode==ENTRY_HYBRID)
-      {
-         double ema1,ema2,c1,c2;
-         if(CopyAt(hEMA_E,0,1,ema1,"EMA hybrid") && CopyAt(hEMA_E,0,2,ema2,"EMA hybrid") &&
-            CopyCloseAt(gConfig.symbol,gConfig.tfEntry,1,c1,"Close hybrid") && CopyCloseAt(gConfig.symbol,gConfig.tfEntry,2,c2,"Close hybrid"))
-         {
-            if(dir>0 && c2<ema2 && c1>ema1)
-               trigger=true;
-            if(dir<0 && c2>ema2 && c1<ema1)
-               trigger=true;
-         }
-      }
-   }
-
-   if(trigger)
-      EnterTrade(orderType,false);
+   ENUM_ORDER_TYPE orderType = (signal.direction>0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+   PrintDebug(StringFormat("Entry %s regime=%s adx=%.1f atrPts=%.1f",(signal.direction>0?"BUY":"SELL"),EnumToString(gRegime),signal.adxValue,signal.atrEntryPts));
+   EnterTrade(orderType,false,signal);
 }
 
 void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)

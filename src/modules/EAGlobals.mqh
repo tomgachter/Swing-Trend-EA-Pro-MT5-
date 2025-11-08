@@ -3,6 +3,7 @@
 
 #include "CalendarCompat.mqh"
 #include "TradeCompat.mqh"
+#include "presets.mqh"
 
 enum EntryMode
 {
@@ -36,6 +37,12 @@ enum InpPreset
 //+------------------------------------------------------------------+
 //| Input parameters                                                 |
 //+------------------------------------------------------------------+
+input double            RiskPct              = 0.70;                   // % risk per base trade
+input int               Aggressiveness       = 1;                      // 0=Defensive,1=Neutral,2=Aggressive
+input bool              Pyramiding           = true;                   // Allow add-on positions
+input int               MaxOpenPositions     = 2;                      // Simultaneous trade cap
+input ENUM_RiskGuardsPreset RiskGuardsPreset = RISK_BALANCED;          // Risk guard preset
+
 input InpPreset         InpPresetSelection    = PRESET_XAUUSD_H1_DEFAULT; // Active configuration preset
 input string            InpSymbol             = "XAUUSD";                // Default (XAUUSD, H1): trading symbol
 
@@ -260,6 +267,10 @@ struct EAConfig
 };
 
 EAConfig             gConfig;
+
+Regime              gRegime            = REG_MID;
+Preset              gPreset;
+RiskGuardProfile    gRiskProfile;
 
 datetime            lastBarTime           = 0;
 datetime            lastEntryBarTime      = 0;
