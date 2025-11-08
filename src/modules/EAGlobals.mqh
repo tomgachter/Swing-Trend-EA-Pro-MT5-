@@ -64,6 +64,7 @@ input EntryMode         InpEntryMode          = ENTRY_HYBRID;            // Defa
 input int               InpDonchianBars_Base  = 16;                      // Default (XAUUSD, H1): base Donchian channel length
 input double            InpDonchianBars_MinMax= 10.0;                    // Default (XAUUSD, H1): min/max deviation from base
 input double            InpBreakoutBufferPts  = 6.0;                     // Default (XAUUSD, H1): breakout buffer in points
+input double            InpBreakoutBufferATR  = 0.10;                    // Default (XAUUSD, H1): breakout buffer as ATR fraction
 
 //--- Regime controls
 input int               InpATR_D1_Period      = 14;                      // Default (XAUUSD, H1): ATR period for D1 regime
