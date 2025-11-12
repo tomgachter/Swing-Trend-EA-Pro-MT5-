@@ -15,6 +15,7 @@ public:
    BrokerUtils(): m_magic(0), m_comment(""), m_slippage(20.0)
    {
       m_trade.SetTypeFilling(ORDER_FILLING_FOK);
+      m_trade.SetAsyncMode(false);
    }
 
    void Configure(const ulong magic,const string comment,const double deviationPoints)
@@ -30,12 +31,29 @@ public:
    {
       if(volume<=0.0)
          return false;
-      bool result=false;
+      ENUM_ORDER_TYPE type;
       if(direction>0)
-         result = m_trade.PositionOpen(_Symbol,ORDER_TYPE_BUY,volume,price,sl,tp,m_comment);
+         type = ORDER_TYPE_BUY;
       else if(direction<0)
-         result = m_trade.PositionOpen(_Symbol,ORDER_TYPE_SELL,volume,price,sl,tp,m_comment);
-      return result;
+         type = ORDER_TYPE_SELL;
+      else
+         return false;
+      for(int attempt=0; attempt<3; ++attempt)
+      {
+         ResetLastError();
+         bool ok = m_trade.PositionOpen(_Symbol,type,volume,price,sl,tp,m_comment);
+         if(ok)
+            return true;
+         int err = GetLastError();
+         if(err==ERR_REQUOTE || err==ERR_OFF_QUOTES || err==ERR_PRICE_CHANGED)
+         {
+            Sleep(200*(attempt+1));
+            RefreshRates();
+            continue;
+         }
+         break;
+      }
+      return false;
    }
 
    bool ModifySL(const ulong ticket,const double sl)
