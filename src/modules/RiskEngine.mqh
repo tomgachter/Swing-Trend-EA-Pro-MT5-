@@ -11,47 +11,75 @@ private:
    DailyGuard  m_dailyGuard;
    double      m_maxEquityDDPercent;
    double      m_equityPeak;
+   double      m_initialEquity;
    RiskMode    m_riskMode;
    double      m_riskSetting;
    bool        m_useDynamicRisk;
    double      m_lowFactor;
    double      m_normalFactor;
    double      m_highFactor;
+   int         m_dayStartHour;
+   string      m_persistKey;
+   bool        m_useStaticOverallDD;
+   double      m_slippageBudgetPts;
 
 public:
-   RiskEngine(): m_maxEquityDDPercent(12.0), m_equityPeak(0.0), m_riskMode(RISK_PERCENT_PER_TRADE), m_riskSetting(0.5),
-                 m_useDynamicRisk(false), m_lowFactor(0.8), m_normalFactor(1.0), m_highFactor(1.2)
+   RiskEngine(): m_maxEquityDDPercent(12.0), m_equityPeak(0.0), m_initialEquity(0.0),
+                 m_riskMode(RISK_PERCENT_PER_TRADE), m_riskSetting(0.5),
+                 m_useDynamicRisk(false), m_lowFactor(0.8), m_normalFactor(1.0), m_highFactor(1.2),
+                 m_dayStartHour(0), m_persistKey(""), m_useStaticOverallDD(false), m_slippageBudgetPts(0.0)
    {
    }
 
-   void Configure(const RiskMode mode,const double riskSetting,const double maxDailyRisk,const double maxEquityDD)
+   void Configure(const RiskMode mode,const double riskSetting,const double maxDailyRisk,const double maxEquityDD,
+                  const int dayStartHour,const string persistKey,const bool staticOverallDD,const double slippageBudgetPts)
    {
       m_riskMode = mode;
       m_riskSetting = riskSetting;
-      m_dailyGuard.Configure(maxDailyRisk);
       m_maxEquityDDPercent = maxEquityDD;
-      m_equityPeak = AccountInfoDouble(ACCOUNT_EQUITY);
-      datetime today = iTime(_Symbol,PERIOD_D1,0);
-      m_dailyGuard.Reset(today,AccountInfoDouble(ACCOUNT_BALANCE));
+      m_dayStartHour = dayStartHour;
+      m_persistKey = persistKey;
+      m_useStaticOverallDD = staticOverallDD;
+      m_slippageBudgetPts = MathMax(0.0,slippageBudgetPts);
+      m_dailyGuard.Configure(maxDailyRisk,dayStartHour,persistKey);
+      double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+      m_equityPeak = equity;
+      if(m_persistKey!="")
+      {
+         string initKey = m_persistKey+"_INIT";
+         if(GlobalVariableCheck(initKey))
+            m_initialEquity = GlobalVariableGet(initKey);
+         if(m_initialEquity<=0.0)
+            m_initialEquity = equity;
+         GlobalVariableSet(initKey,m_initialEquity);
+      }
+      else
+      {
+         m_initialEquity = equity;
+      }
+      m_dailyGuard.Heartbeat(TimeCurrent(),equity);
    }
 
    void OnNewDay()
    {
-      datetime today = iTime(_Symbol,PERIOD_D1,0);
-      if(today!=m_dailyGuard.CurrentDay())
-      {
-         m_dailyGuard.Reset(today,AccountInfoDouble(ACCOUNT_BALANCE));
-      }
+      m_dailyGuard.Heartbeat(TimeCurrent(),AccountInfoDouble(ACCOUNT_EQUITY));
    }
 
    bool EquityKillSwitchTriggered()
    {
       double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+      if(m_useStaticOverallDD)
+      {
+         if(m_initialEquity<=0.0)
+            return false;
+         double ddStatic = 100.0*(m_initialEquity-equity)/MathMax(1.0,m_initialEquity);
+         return (ddStatic >= m_maxEquityDDPercent);
+      }
       if(equity>m_equityPeak)
          m_equityPeak = equity;
       if(m_equityPeak<=0.0)
          return false;
-      double ddPercent = (m_equityPeak-equity)/m_equityPeak*100.0;
+      double ddPercent = (m_equityPeak-equity)/MathMax(1.0,m_equityPeak)*100.0;
       return (ddPercent >= m_maxEquityDDPercent);
    }
 
@@ -90,11 +118,19 @@ public:
          riskPercent = effectiveSetting*riskAdjust;
       }
 
-      if(!m_dailyGuard.AllowNewTrade(riskPercent))
+      double riskWcPercent = riskPercent;
+      if(stopPoints>0.0 && m_slippageBudgetPts>0.0)
+         riskWcPercent = riskPercent*(1.0 + (m_slippageBudgetPts/stopPoints));
+      if(!m_dailyGuard.AllowNewTrade(riskWcPercent,AccountInfoDouble(ACCOUNT_EQUITY)))
          return false;
 
       volume = lot;
       return true;
+   }
+
+   bool DailyLimitBreached()
+   {
+      return m_dailyGuard.ShouldFlatten(AccountInfoDouble(ACCOUNT_EQUITY));
    }
 
    void OnTradeOpened(const double riskPercent)

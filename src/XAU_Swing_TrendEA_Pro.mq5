@@ -21,11 +21,15 @@
 input RiskMode         InpRiskMode = RISK_PERCENT_PER_TRADE;  // Risk allocation model
 input double            RiskPerTrade = 0.75;                // Percent or lots depending on mode
 input double            MaxDailyRiskPercent = 5.0;          // Daily loss+open risk cap in %
-input double            MaxEquityDDPercentForCloseAll = 12; // Hard equity drawdown kill switch
+input double            MaxEquityDDPercentForCloseAll = 10; // Hard equity drawdown kill switch
 input ulong             MagicNumber = 20241026;             // Trade identifier
 input string            TradeComment = "XAU_Swing_TrendEA_Pro";
 input bool              EnableChartAnnotations = true;
 input bool              RandomizeEntryExit = false;
+input int               PropFirmDayStartHour = 0;           // Serverzeit-Offset für Tagesanker
+input bool              UseStaticOverallDD   = true;        // Statischer Gesamt-DD (prop-konform)
+input int               SlippageBudgetPoints = 80;          // Worst-case Slippage für Budgetprüfung
+input int               MaxSpreadPoints      = 200;         // Maximaler Spread in Punkten für neue Einstiege
 input int               SessionStartHour = 7;
 input int               SessionStartMinute = 0;
 input int               SessionEndHour = 14;
@@ -76,7 +80,9 @@ int OnInit()
    gEntry.Configure(RandomizeEntryExit);
    gEntry.SetMultipliers(StopLossATRMultiplier,PartialTPATRMultiplier,TrailingATRMultiplier);
    gExit.Configure(gEntry.TrailMultiplier(),15.0);
-   gRisk.Configure(InpRiskMode,RiskPerTrade,MaxDailyRiskPercent,MaxEquityDDPercentForCloseAll);
+   string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MagicNumber);
+   gRisk.Configure(InpRiskMode,RiskPerTrade,MaxDailyRiskPercent,MaxEquityDDPercentForCloseAll,
+                   PropFirmDayStartHour,persistKey,UseStaticOverallDD,(double)SlippageBudgetPoints);
    gRisk.SetDynamicRiskEnabled(UseDynamicRisk);
    if(!gRegime.Init(_Symbol,14))
    {
@@ -106,6 +112,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
+   // Hinweis: Falls Module Indikator-Handles halten, hier per IndicatorRelease freigeben.
 }
 
 //+------------------------------------------------------------------+
@@ -115,6 +122,13 @@ void OnTick()
 {
    gRisk.OnNewDay();
    gRegime.Update();
+
+   if(gRisk.DailyLimitBreached())
+   {
+      Print("Daily equity loss limit breached -> closing all positions");
+      CloseAllPositions();
+      return;
+   }
 
    if(gRisk.EquityKillSwitchTriggered())
    {
@@ -232,6 +246,23 @@ void AttemptEntry(const EntrySignal &signal)
    double stopPoints = gSizer.StopDistancePoints(signal.entryPrice,signal.stopLoss);
    if(stopPoints<=0.0)
       return;
+
+   double bid = SymbolInfoDouble(_Symbol,SYMBOL_BID);
+   double ask = SymbolInfoDouble(_Symbol,SYMBOL_ASK);
+   double point = SymbolInfoDouble(_Symbol,SYMBOL_POINT);
+   if(point<=0.0)
+      point = _Point;
+   if(point>0.0)
+   {
+      int spreadPts = (int)MathRound((ask-bid)/point);
+      if(spreadPts>MaxSpreadPoints)
+      {
+         if(EnableChartAnnotations)
+            AnnotateChart("Spread zu hoch",clrTomato);
+         PrintFormat("Spread %dpt > MaxSpreadPoints %d -> Entry verworfen",spreadPts,MaxSpreadPoints);
+         return;
+      }
+   }
 
    double volume=0.0;
    double riskPercent=0.0;

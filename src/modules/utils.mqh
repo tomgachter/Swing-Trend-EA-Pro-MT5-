@@ -12,6 +12,11 @@ inline double Clamp(const double value,const double lo,const double hi)
    return MathMin(hi,MathMax(lo,value));
 }
 
+inline int Clamp(const int value,const int lo,const int hi)
+{
+   return MathMin(hi,MathMax(lo,value));
+}
+
 inline double Lerp(const double a,const double b,const double t)
 {
    return a + (b-a)*t;
