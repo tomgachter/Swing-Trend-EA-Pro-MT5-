@@ -112,7 +112,8 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   // Hinweis: Falls Module Indikator-Handles halten, hier per IndicatorRelease freigeben.
+   gBias.Release();
+   gRegime.Release();
 }
 
 //+------------------------------------------------------------------+

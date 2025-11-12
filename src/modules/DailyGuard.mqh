@@ -141,7 +141,9 @@ public:
       double dayLoss = EquityLossPercent(equity);
       if(dayLoss>=m_maxDailyRiskPercent)
          return true;
-      return (m_realizedLossPercent + m_openRiskPercent) >= m_maxDailyRiskPercent;
+      if((m_realizedLossPercent + m_openRiskPercent) >= m_maxDailyRiskPercent)
+         return true;
+      return (dayLoss + m_openRiskPercent) >= m_maxDailyRiskPercent;
    }
 
    bool AllowNewTrade(const double upcomingRiskPercent,const double equityNow)

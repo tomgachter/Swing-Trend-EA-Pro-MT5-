@@ -45,6 +45,25 @@ public:
       return (m_handleH1!=INVALID_HANDLE && m_handleH4!=INVALID_HANDLE && m_handleD1!=INVALID_HANDLE);
    }
 
+   void Release()
+   {
+      if(m_handleH1!=INVALID_HANDLE)
+      {
+         IndicatorRelease(m_handleH1);
+         m_handleH1 = INVALID_HANDLE;
+      }
+      if(m_handleH4!=INVALID_HANDLE)
+      {
+         IndicatorRelease(m_handleH4);
+         m_handleH4 = INVALID_HANDLE;
+      }
+      if(m_handleD1!=INVALID_HANDLE)
+      {
+         IndicatorRelease(m_handleD1);
+         m_handleD1 = INVALID_HANDLE;
+      }
+   }
+
    bool Update(RegimeFilter &regime)
    {
       double emaH1Buffer[];
