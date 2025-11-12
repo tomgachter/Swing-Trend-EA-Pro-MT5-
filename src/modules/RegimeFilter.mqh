@@ -64,6 +64,20 @@ public:
       return Update(true);
    }
 
+   void Release()
+   {
+      if(m_handleH1!=INVALID_HANDLE)
+      {
+         IndicatorRelease(m_handleH1);
+         m_handleH1 = INVALID_HANDLE;
+      }
+      if(m_handleH4!=INVALID_HANDLE)
+      {
+         IndicatorRelease(m_handleH4);
+         m_handleH4 = INVALID_HANDLE;
+      }
+   }
+
    bool Update(const bool force=false)
    {
       datetime barTime = iTime(m_symbol,m_tfH1,0);
