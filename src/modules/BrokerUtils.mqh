@@ -2,7 +2,18 @@
 #define __BROKER_UTILS_MQH__
 
 #include <Trade\Trade.mqh>
-#include <stderror.mqh>
+
+#ifndef ERR_REQUOTE
+   #define ERR_REQUOTE 138
+#endif
+
+#ifndef ERR_OFF_QUOTES
+   #define ERR_OFF_QUOTES 136
+#endif
+
+#ifndef ERR_PRICE_CHANGED
+   #define ERR_PRICE_CHANGED 135
+#endif
 
 class BrokerUtils
 {
