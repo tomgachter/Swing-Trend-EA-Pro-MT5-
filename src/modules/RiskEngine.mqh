@@ -67,7 +67,11 @@ public:
 
    double RecomputeOpenRiskPercent(PositionSizer &sizer,const ulong magic)
    {
-      double capital = AccountInfoDouble(ACCOUNT_BALANCE);
+      double capital = m_dailyGuard.DayAnchorEquity();
+      if(capital<=0.0)
+         capital = AccountInfoDouble(ACCOUNT_EQUITY);
+      if(capital<=0.0)
+         capital = AccountInfoDouble(ACCOUNT_BALANCE);
       if(capital<=0.0)
          return 0.0;
 
@@ -97,6 +101,21 @@ public:
          totalRiskAmt += ptsToSL*perPoint*vol;
       }
       return (capital>0.0 ? 100.0*(totalRiskAmt/capital) : 0.0);
+   }
+
+   bool HasSufficientMargin(const int direction,const double volume,const double price) const
+   {
+      if(volume<=0.0)
+         return false;
+
+      ENUM_ORDER_TYPE type = (direction>0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
+      double margin = 0.0;
+      if(!OrderCalcMargin(type,_Symbol,volume,price,margin) || margin<=0.0)
+         return false;
+
+      double freeMargin = AccountInfoDouble(ACCOUNT_FREEMARGIN);
+      double minRatio = 1.1;
+      return (freeMargin > margin * minRatio);
    }
 
    void RefreshOpenRisk(PositionSizer &sizer,const ulong magic)

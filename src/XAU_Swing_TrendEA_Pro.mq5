@@ -274,6 +274,14 @@ void AttemptEntry(const EntrySignal &signal)
       return;
    }
 
+   if(!gRisk.HasSufficientMargin(signal.direction,volume,signal.entryPrice))
+   {
+      if(EnableChartAnnotations)
+         AnnotateChart("Margin check failed",clrTomato);
+      Print("Margin check failed -> entry skipped");
+      return;
+   }
+
    double tp = 0.0; // trailing handles final exit
    if(!gBroker.OpenPosition(signal.direction,volume,signal.entryPrice,signal.stopLoss,tp))
    {

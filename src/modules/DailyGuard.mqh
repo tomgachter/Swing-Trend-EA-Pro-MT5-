@@ -26,6 +26,16 @@ public:
    {
    }
 
+   double DayAnchorEquity() const
+   {
+      return m_dayEquityAnchor;
+   }
+
+   int DaySerialId() const
+   {
+      return m_daySerial;
+   }
+
    void Configure(const double maxDailyRisk,const int dayStartHour,const string persistKey)
    {
       m_maxDailyRiskPercent = maxDailyRisk;
