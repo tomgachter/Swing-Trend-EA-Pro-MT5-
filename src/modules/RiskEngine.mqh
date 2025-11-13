@@ -23,13 +23,14 @@ private:
    bool        m_useStaticOverallDD;
    double      m_slippageBudgetPts;
    bool        m_debugMode;
+   bool        m_verboseMode;
 
 public:
    RiskEngine(): m_maxEquityDDPercent(12.0), m_equityPeak(0.0), m_initialEquity(0.0),
                  m_riskMode(RISK_PERCENT_PER_TRADE), m_riskSetting(0.5),
                  m_useDynamicRisk(false), m_lowFactor(0.8), m_normalFactor(1.0), m_highFactor(1.2),
                  m_dayStartHour(0), m_persistKey(""), m_useStaticOverallDD(false), m_slippageBudgetPts(0.0),
-                 m_debugMode(false)
+                 m_debugMode(false), m_verboseMode(false)
    {
    }
 
@@ -114,8 +115,8 @@ public:
       double margin = 0.0;
       if(!OrderCalcMargin(type,_Symbol,volume,price,margin) || margin<=0.0)
       {
-         if(m_debugMode)
-            Print("MARGIN DEBUG: OrderCalcMargin failed or margin<=0 -> allowing in debug mode");
+         if(m_debugMode || m_verboseMode)
+            Print("MARGIN DEBUG: OrderCalcMargin failed or margin<=0");
          return (m_debugMode ? true : false);
       }
 
@@ -124,15 +125,22 @@ public:
          freeMargin = AccountInfoDouble(ACCOUNT_FREEMARGIN);
       double minRatio = 1.1;
       bool ok = (freeMargin > margin * minRatio);
-      if(m_debugMode)
+      if(m_debugMode || m_verboseMode)
       {
          double ratio = (margin>0.0 ? freeMargin/margin : 0.0);
          PrintFormat("MARGIN DEBUG: freeMargin=%.2f required=%.2f ratio=%.2f minRatio=%.2f ok=%s",
                      freeMargin,margin,ratio,minRatio,ok?"true":"false");
          if(!ok)
-            Print("MARGIN DEBUG: insufficient margin but proceeding due to debug mode");
+         {
+            if(m_debugMode)
+               Print("MARGIN DEBUG: insufficient margin but proceeding due to debug mode");
+            else
+               Print("MARGIN DEBUG: insufficient margin -> entry blocked");
+         }
       }
-      return (ok || m_debugMode);
+      if(!ok)
+         return m_debugMode;
+      return true;
    }
 
    void RefreshOpenRisk(PositionSizer &sizer,const ulong magic)
@@ -170,12 +178,19 @@ public:
       m_dailyGuard.SetDebugMode(debug);
    }
 
+   void SetVerboseMode(const bool verbose)
+   {
+      // Ergänzt reine Diagnose-Logs, ohne die Risk-Guards (anders als Debug) zu überstimmen.
+      m_verboseMode = verbose;
+      m_dailyGuard.SetVerboseMode(verbose);
+   }
+
    bool AllowNewTrade(const double stopPoints,PositionSizer &sizer,RegimeFilter &regime,double &volume,double &riskPercent)
    {
       double balance = AccountInfoDouble(ACCOUNT_BALANCE);
       double riskAdjust = m_dailyGuard.RiskReductionFactor();
       double effectiveSetting = m_riskSetting;
-      if(m_debugMode)
+      if(m_debugMode || m_verboseMode)
       {
          PrintFormat("RISK DEBUG: stopPoints=%.1f balance=%.2f riskSetting=%.2f riskAdjust=%.2f mode=%d",
                      stopPoints,balance,m_riskSetting,riskAdjust,(int)m_riskMode);
@@ -192,7 +207,7 @@ public:
       }
       double lot = sizer.CalculateVolume(m_riskMode,effectiveSetting,stopPoints,balance,riskAdjust);
       SymbolContext ctx = sizer.Context();
-      if(m_debugMode)
+      if(m_debugMode || m_verboseMode)
       {
          PrintFormat("RISK DEBUG: rawLot=%.4f minLot=%.4f maxLot=%.4f",
                      lot,ctx.minLot,ctx.maxLot);
@@ -206,6 +221,8 @@ public:
          }
          else
          {
+            if(m_verboseMode)
+               PrintFormat("RISK DEBUG: lot %.4f < minLot %.4f -> reject",lot,ctx.minLot);
             return false;
          }
       }
@@ -214,6 +231,12 @@ public:
          if(m_debugMode)
          {
             PrintFormat("RISK DEBUG: lot %.4f > maxLot %.4f -> clamping to maxLot due to debug",lot,ctx.maxLot);
+            lot = ctx.maxLot;
+         }
+         else
+         {
+            if(m_verboseMode)
+               PrintFormat("RISK DEBUG: lot %.4f > maxLot %.4f -> clamped",lot,ctx.maxLot);
             lot = ctx.maxLot;
          }
       }
@@ -228,7 +251,7 @@ public:
          riskPercent = effectiveSetting*riskAdjust;
       }
 
-      if(m_debugMode)
+      if(m_debugMode || m_verboseMode)
       {
          PrintFormat("RISK DEBUG: riskPercent=%.2f%%",riskPercent);
       }
@@ -237,7 +260,7 @@ public:
       if(stopPoints>0.0 && m_slippageBudgetPts>0.0)
          riskWcPercent = riskPercent*(1.0 + (m_slippageBudgetPts/stopPoints));
       double equityNow = AccountInfoDouble(ACCOUNT_EQUITY);
-      if(m_debugMode)
+      if(m_debugMode || m_verboseMode)
       {
          PrintFormat("RISK DEBUG: riskWcPercent=%.2f%% equity=%.2f dayLoss=%.2f%% realized=%.2f%% open=%.2f%% limit=%.2f%%",
                      riskWcPercent,
@@ -256,12 +279,14 @@ public:
          }
          else
          {
+            if(m_verboseMode)
+               Print("RISK DEBUG: DailyGuard rejected trade -> entry blocked");
             return false;
          }
       }
 
       volume = lot;
-      if(m_debugMode)
+      if(m_debugMode || m_verboseMode)
       {
          PrintFormat("RISK DEBUG: finalVolume=%.4f",volume);
       }

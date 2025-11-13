@@ -41,6 +41,7 @@ input double            TrailingATRMultiplier = 2.0;
 input bool              UseDynamicRisk = true;
 input bool              EnableFallbackEntry = true;
 input bool              DebugMode = true;    // ausführliches Logging + Debug-Fallbacks
+input bool              ForceVerboseDecisionLog = false; // erzwingt detaillierte Entscheidungs-Logs ohne Debug-Overrides
 
 //--- globals
 BrokerUtils   gBroker;
@@ -56,6 +57,7 @@ datetime      gLastBarTime = 0;
 datetime      gEntryHistory[];
 int           gFallbackWeekId = -1;
 bool          gFallbackUsedThisWeek = false;
+bool          gVerboseDecisionLog = false;
 
 //--- helper declarations
 bool IsNewBar();
@@ -76,6 +78,7 @@ bool ShouldUseFallbackEntry(const datetime signalTime,const int recentEntries);
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   gVerboseDecisionLog = (DebugMode || ForceVerboseDecisionLog);
    gBroker.Configure(MagicNumber,TradeComment,20);
    gSession.Configure(SessionStartHour,SessionStartMinute,SessionEndHour,SessionEndMinute);
    gSession.SetDebugMode(DebugMode);
@@ -86,6 +89,7 @@ int OnInit()
    gRisk.Configure(InpRiskMode,RiskPerTrade,MaxDailyRiskPercent,MaxEquityDDPercentForCloseAll,
                    PropFirmDayStartHour,persistKey,UseStaticOverallDD,(double)SlippageBudgetPoints);
    gRisk.SetDebugMode(DebugMode);
+   gRisk.SetVerboseMode(gVerboseDecisionLog);
    gRisk.SetDynamicRiskEnabled(UseDynamicRisk);
    if(!gRegime.Init(_Symbol,14))
    {
@@ -189,8 +193,21 @@ void EvaluateNewBar()
    if(useFallback)
       slopeThreshold *= 0.5;
    gBias.SetSlopeThreshold(slopeThreshold);
+   // Diagnose: Zuvor brach die Entry-Kette still ab. Das detaillierte Logging macht jetzt sichtbar,
+   // welche Stufe (Bias/Session/Daten) einen Trade verhindert.
+   if(gVerboseDecisionLog)
+   {
+      PrintFormat("ENTRY TRACE: new bar %s fallback=%s slopeThreshold=%.4f entries7d=%d",TimeToString(signalTime,TIME_DATE|TIME_MINUTES),
+                  useFallback?"true":"false",slopeThreshold,recentEntries);
+   }
    if(!gBias.Update(gRegime))
+   {
+      if(gVerboseDecisionLog)
+      {
+         PrintFormat("ENTRY TRACE: Bias update failed at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
+      }
       return;
+   }
 
    SessionWindow window;
    if(!gSession.AllowsEntry(signalTime,window))
@@ -198,6 +215,8 @@ void EvaluateNewBar()
       AnnotateChart("Session filter blocked entry",clrSilver);
       if(DebugMode)
          PrintFormat("ENTRY DEBUG: Session filter blocked entry at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
+      else if(gVerboseDecisionLog)
+         PrintFormat("ENTRY TRACE: Session filter blocked entry at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
       return;
    }
 
@@ -205,11 +224,19 @@ void EvaluateNewBar()
    ArraySetAsSeries(rates,true);
    int copied = CopyRates(_Symbol,PERIOD_H1,0,6,rates);
    if(copied<3)
+   {
+      if(gVerboseDecisionLog)
+         PrintFormat("ENTRY TRACE: insufficient rate data copied=%d",copied);
       return;
+   }
 
    EntrySignal signal;
-   if(!gEntry.Evaluate(gBias,gRegime,window,rates,copied,useFallback,signal))
+   if(!gEntry.Evaluate(gBias,gRegime,window,rates,copied,useFallback,gVerboseDecisionLog,signal))
+   {
+      if(gVerboseDecisionLog)
+         Print("ENTRY TRACE: EntryEngine returned no signal");
       return;
+   }
 
    if(HasDirectionalPosition(signal.direction))
    {

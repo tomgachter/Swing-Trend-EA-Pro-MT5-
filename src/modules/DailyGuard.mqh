@@ -18,13 +18,14 @@ private:
    double   m_dayWorstEquity;
    datetime m_lastHeartbeat;
    bool     m_debugMode;
+   bool     m_verboseMode;
 
 public:
    DailyGuard(): m_maxDailyRiskPercent(6.0), m_realizedLossPercent(0.0), m_openRiskPercent(0.0),
                  m_riskReductionFactor(1.0), m_consecutiveLosses(0), m_currentDay(0),
                  m_dayBalanceAnchor(0.0), m_dayStartHour(0), m_daySerial(0), m_gvKey(""),
                  m_dayEquityAnchor(0.0), m_dayWorstEquity(0.0), m_lastHeartbeat(0),
-                 m_debugMode(false)
+                 m_debugMode(false), m_verboseMode(false)
    {
    }
 
@@ -41,6 +42,12 @@ public:
    void SetDebugMode(const bool debug)
    {
       m_debugMode = debug;
+   }
+
+   void SetVerboseMode(const bool verbose)
+   {
+      // Zusätzliche Protokollierung ohne das Schutzverhalten zu verändern.
+      m_verboseMode = verbose;
    }
 
    void Configure(const double maxDailyRisk,const int dayStartHour,const string persistKey)
@@ -186,7 +193,7 @@ public:
    bool AllowNewTrade(const double upcomingRiskPercent,const double equityNow)
    {
       double dayLoss = EquityLossPercent(equityNow);
-      if(m_debugMode)
+      if(m_debugMode || m_verboseMode)
       {
          double totalRisk = m_realizedLossPercent + m_openRiskPercent + upcomingRiskPercent;
          PrintFormat("DAILY DEBUG: dayLoss=%.2f%% realized=%.2f%% open=%.2f%% upcoming=%.2f%% limit=%.2f%%",
