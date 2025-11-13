@@ -201,9 +201,6 @@ void EvaluateNewBar()
       return;
    }
 
-   if(HasDirectionalPosition(gBias.Direction()))
-      return;
-
    MqlRates rates[6];
    int copied = CopyRates(_Symbol,PERIOD_H1,0,6,rates);
    if(copied<3)
@@ -212,6 +209,12 @@ void EvaluateNewBar()
    EntrySignal signal;
    if(!gEntry.Evaluate(gBias,gRegime,window,rates,copied,useFallback,signal))
       return;
+
+   if(HasDirectionalPosition(signal.direction))
+   {
+      AnnotateChart("Position in same direction already open",clrSilver);
+      return;
+   }
 
    AttemptEntry(signal);
 }
@@ -230,7 +233,9 @@ void ManageOpenPositions()
 bool HasDirectionalPosition(const int direction)
 {
    if(direction==0)
-      return true;
+      return false;
+
+   ENUM_POSITION_TYPE need = (direction>0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
    for(int i=PositionsTotal()-1;i>=0;i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -239,6 +244,8 @@ bool HasDirectionalPosition(const int direction)
       if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
          continue;
       if((ulong)PositionGetInteger(POSITION_MAGIC)!=MagicNumber)
+         continue;
+      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE)!=need)
          continue;
       return true;
    }
