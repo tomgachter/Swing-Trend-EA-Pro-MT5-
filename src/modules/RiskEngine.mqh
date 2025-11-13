@@ -22,12 +22,14 @@ private:
    string      m_persistKey;
    bool        m_useStaticOverallDD;
    double      m_slippageBudgetPts;
+   bool        m_debugMode;
 
 public:
    RiskEngine(): m_maxEquityDDPercent(12.0), m_equityPeak(0.0), m_initialEquity(0.0),
                  m_riskMode(RISK_PERCENT_PER_TRADE), m_riskSetting(0.5),
                  m_useDynamicRisk(false), m_lowFactor(0.8), m_normalFactor(1.0), m_highFactor(1.2),
-                 m_dayStartHour(0), m_persistKey(""), m_useStaticOverallDD(false), m_slippageBudgetPts(0.0)
+                 m_dayStartHour(0), m_persistKey(""), m_useStaticOverallDD(false), m_slippageBudgetPts(0.0),
+                 m_debugMode(false)
    {
    }
 
@@ -111,11 +113,26 @@ public:
       ENUM_ORDER_TYPE type = (direction>0 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL);
       double margin = 0.0;
       if(!OrderCalcMargin(type,_Symbol,volume,price,margin) || margin<=0.0)
-         return false;
+      {
+         if(m_debugMode)
+            Print("MARGIN DEBUG: OrderCalcMargin failed or margin<=0 -> allowing in debug mode");
+         return (m_debugMode ? true : false);
+      }
 
       double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+      if(freeMargin<=0.0)
+         freeMargin = AccountInfoDouble(ACCOUNT_FREEMARGIN);
       double minRatio = 1.1;
-      return (freeMargin > margin * minRatio);
+      bool ok = (freeMargin > margin * minRatio);
+      if(m_debugMode)
+      {
+         double ratio = (margin>0.0 ? freeMargin/margin : 0.0);
+         PrintFormat("MARGIN DEBUG: freeMargin=%.2f required=%.2f ratio=%.2f minRatio=%.2f ok=%s",
+                     freeMargin,margin,ratio,minRatio,ok?"true":"false");
+         if(!ok)
+            Print("MARGIN DEBUG: insufficient margin but proceeding due to debug mode");
+      }
+      return (ok || m_debugMode);
    }
 
    void RefreshOpenRisk(PositionSizer &sizer,const ulong magic)
@@ -147,11 +164,22 @@ public:
       m_useDynamicRisk = enabled;
    }
 
+   void SetDebugMode(const bool debug)
+   {
+      m_debugMode = debug;
+      m_dailyGuard.SetDebugMode(debug);
+   }
+
    bool AllowNewTrade(const double stopPoints,PositionSizer &sizer,RegimeFilter &regime,double &volume,double &riskPercent)
    {
       double balance = AccountInfoDouble(ACCOUNT_BALANCE);
       double riskAdjust = m_dailyGuard.RiskReductionFactor();
       double effectiveSetting = m_riskSetting;
+      if(m_debugMode)
+      {
+         PrintFormat("RISK DEBUG: stopPoints=%.1f balance=%.2f riskSetting=%.2f riskAdjust=%.2f mode=%d",
+                     stopPoints,balance,m_riskSetting,riskAdjust,(int)m_riskMode);
+      }
       if(m_useDynamicRisk)
       {
          RegimeBucket bucket = regime.CurrentBucket();
@@ -164,8 +192,31 @@ public:
       }
       double lot = sizer.CalculateVolume(m_riskMode,effectiveSetting,stopPoints,balance,riskAdjust);
       SymbolContext ctx = sizer.Context();
+      if(m_debugMode)
+      {
+         PrintFormat("RISK DEBUG: rawLot=%.4f minLot=%.4f maxLot=%.4f",
+                     lot,ctx.minLot,ctx.maxLot);
+      }
       if(lot<ctx.minLot)
-         return false;
+      {
+         if(m_debugMode)
+         {
+            PrintFormat("RISK DEBUG: lot %.4f < minLot %.4f -> clamping to minLot due to debug",lot,ctx.minLot);
+            lot = ctx.minLot;
+         }
+         else
+         {
+            return false;
+         }
+      }
+      if(lot>ctx.maxLot)
+      {
+         if(m_debugMode)
+         {
+            PrintFormat("RISK DEBUG: lot %.4f > maxLot %.4f -> clamping to maxLot due to debug",lot,ctx.maxLot);
+            lot = ctx.maxLot;
+         }
+      }
 
       if(m_riskMode==RISK_FIXED_LOTS)
       {
@@ -177,13 +228,43 @@ public:
          riskPercent = effectiveSetting*riskAdjust;
       }
 
+      if(m_debugMode)
+      {
+         PrintFormat("RISK DEBUG: riskPercent=%.2f%%",riskPercent);
+      }
+
       double riskWcPercent = riskPercent;
       if(stopPoints>0.0 && m_slippageBudgetPts>0.0)
          riskWcPercent = riskPercent*(1.0 + (m_slippageBudgetPts/stopPoints));
-      if(!m_dailyGuard.AllowNewTrade(riskWcPercent,AccountInfoDouble(ACCOUNT_EQUITY)))
-         return false;
+      double equityNow = AccountInfoDouble(ACCOUNT_EQUITY);
+      if(m_debugMode)
+      {
+         PrintFormat("RISK DEBUG: riskWcPercent=%.2f%% equity=%.2f dayLoss=%.2f%% realized=%.2f%% open=%.2f%% limit=%.2f%%",
+                     riskWcPercent,
+                     equityNow,
+                     m_dailyGuard.EquityLossPercent(equityNow),
+                     m_dailyGuard.RealizedLossPercent(),
+                     m_dailyGuard.OpenRiskPercent(),
+                     m_dailyGuard.MaxDailyRiskPercent());
+      }
+      bool allowed = m_dailyGuard.AllowNewTrade(riskWcPercent,equityNow);
+      if(!allowed)
+      {
+         if(m_debugMode)
+         {
+            Print("RISK DEBUG: DailyGuard rejected trade -> overriding due to debug mode");
+         }
+         else
+         {
+            return false;
+         }
+      }
 
       volume = lot;
+      if(m_debugMode)
+      {
+         PrintFormat("RISK DEBUG: finalVolume=%.4f",volume);
+      }
       return true;
    }
 

@@ -40,6 +40,7 @@ input double            PartialTPATRMultiplier = 0.7;
 input double            TrailingATRMultiplier = 2.0;
 input bool              UseDynamicRisk = true;
 input bool              EnableFallbackEntry = true;
+input bool              DebugMode = true;    // ausführliches Logging + Debug-Fallbacks
 
 //--- globals
 BrokerUtils   gBroker;
@@ -77,12 +78,14 @@ int OnInit()
 {
    gBroker.Configure(MagicNumber,TradeComment,20);
    gSession.Configure(SessionStartHour,SessionStartMinute,SessionEndHour,SessionEndMinute);
+   gSession.SetDebugMode(DebugMode);
    gEntry.Configure(RandomizeEntryExit);
    gEntry.SetMultipliers(StopLossATRMultiplier,PartialTPATRMultiplier,TrailingATRMultiplier);
    gExit.Configure(gEntry.TrailMultiplier(),15.0);
    string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MagicNumber);
    gRisk.Configure(InpRiskMode,RiskPerTrade,MaxDailyRiskPercent,MaxEquityDDPercentForCloseAll,
                    PropFirmDayStartHour,persistKey,UseStaticOverallDD,(double)SlippageBudgetPoints);
+   gRisk.SetDebugMode(DebugMode);
    gRisk.SetDynamicRiskEnabled(UseDynamicRisk);
    if(!gRegime.Init(_Symbol,14))
    {
@@ -193,6 +196,8 @@ void EvaluateNewBar()
    if(!gSession.AllowsEntry(signalTime,window))
    {
       AnnotateChart("Session filter blocked entry",clrSilver);
+      if(DebugMode)
+         PrintFormat("ENTRY DEBUG: Session filter blocked entry at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
       return;
    }
 
@@ -245,9 +250,22 @@ bool HasDirectionalPosition(const int direction)
 //+------------------------------------------------------------------+
 void AttemptEntry(const EntrySignal &signal)
 {
+   if(DebugMode)
+   {
+      PrintFormat("ENTRY DEBUG: AttemptEntry dir=%d entry=%.2f stop=%.2f fallback=%s",
+                  signal.direction,signal.entryPrice,signal.stopLoss,
+                  signal.fallbackRelaxed?"true":"false");
+   }
    double stopPoints = gSizer.StopDistancePoints(signal.entryPrice,signal.stopLoss);
    if(stopPoints<=0.0)
+   {
+      if(DebugMode)
+         Print("ENTRY DEBUG: stopPoints <= 0 -> abort entry");
       return;
+   }
+
+   if(DebugMode)
+      PrintFormat("ENTRY DEBUG: computed stopPoints=%.1f",stopPoints);
 
    double bid = SymbolInfoDouble(_Symbol,SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol,SYMBOL_ASK);
@@ -261,8 +279,15 @@ void AttemptEntry(const EntrySignal &signal)
       {
          if(EnableChartAnnotations)
             AnnotateChart("Spread zu hoch",clrTomato);
-         PrintFormat("Spread %dpt > MaxSpreadPoints %d -> Entry verworfen",spreadPts,MaxSpreadPoints);
+         if(DebugMode)
+            PrintFormat("ENTRY DEBUG: spreadPts=%d > MaxSpreadPoints=%d -> skip entry",spreadPts,MaxSpreadPoints);
+         else
+            PrintFormat("Spread %dpt > MaxSpreadPoints %d -> Entry verworfen",spreadPts,MaxSpreadPoints);
          return;
+      }
+      else if(DebugMode)
+      {
+         PrintFormat("ENTRY DEBUG: spreadPts=%d within limit %d",spreadPts,MaxSpreadPoints);
       }
    }
 
@@ -271,21 +296,32 @@ void AttemptEntry(const EntrySignal &signal)
    if(!gRisk.AllowNewTrade(stopPoints,gSizer,gRegime,volume,riskPercent))
    {
       AnnotateChart("Risk guard prevented entry",clrTomato);
+      if(DebugMode)
+         Print("ENTRY DEBUG: RiskEngine.AllowNewTrade() returned false");
       return;
    }
+
+   if(DebugMode)
+      PrintFormat("ENTRY DEBUG: proposed volume=%.4f riskPercent=%.2f%%",volume,riskPercent);
 
    if(!gRisk.HasSufficientMargin(signal.direction,volume,signal.entryPrice))
    {
       if(EnableChartAnnotations)
          AnnotateChart("Margin check failed",clrTomato);
-      Print("Margin check failed -> entry skipped");
+      if(DebugMode)
+         Print("ENTRY DEBUG: Margin check failed -> entry skipped");
+      else
+         Print("Margin check failed -> entry skipped");
       return;
    }
 
    double tp = 0.0; // trailing handles final exit
    if(!gBroker.OpenPosition(signal.direction,volume,signal.entryPrice,signal.stopLoss,tp))
    {
-      PrintFormat("Order open failed for direction %d",signal.direction);
+      if(DebugMode)
+         PrintFormat("ENTRY DEBUG: gBroker.OpenPosition() failed dir=%d",signal.direction);
+      else
+         PrintFormat("Order open failed for direction %d",signal.direction);
       return;
    }
 
@@ -301,6 +337,8 @@ void AttemptEntry(const EntrySignal &signal)
       gExit.Register(ticket,signal,stopPoints,volume,riskPercent);
       gRisk.OnTradeOpened(riskPercent);
       AnnotateChart(StringFormat("Opened %s %.2flots",signal.direction>0?"BUY":"SELL",volume),clrGreen);
+      if(DebugMode)
+         PrintFormat("ENTRY DEBUG: Opened position volume=%.2f direction=%d",volume,signal.direction);
       RecordEntryTime(TimeCurrent(),signal.fallbackRelaxed);
       break;
    }

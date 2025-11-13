@@ -17,12 +17,14 @@ private:
    double   m_dayEquityAnchor;
    double   m_dayWorstEquity;
    datetime m_lastHeartbeat;
+   bool     m_debugMode;
 
 public:
    DailyGuard(): m_maxDailyRiskPercent(6.0), m_realizedLossPercent(0.0), m_openRiskPercent(0.0),
                  m_riskReductionFactor(1.0), m_consecutiveLosses(0), m_currentDay(0),
                  m_dayBalanceAnchor(0.0), m_dayStartHour(0), m_daySerial(0), m_gvKey(""),
-                 m_dayEquityAnchor(0.0), m_dayWorstEquity(0.0), m_lastHeartbeat(0)
+                 m_dayEquityAnchor(0.0), m_dayWorstEquity(0.0), m_lastHeartbeat(0),
+                 m_debugMode(false)
    {
    }
 
@@ -34,6 +36,11 @@ public:
    int DaySerialId() const
    {
       return m_daySerial;
+   }
+
+   void SetDebugMode(const bool debug)
+   {
+      m_debugMode = debug;
    }
 
    void Configure(const double maxDailyRisk,const int dayStartHour,const string persistKey)
@@ -151,6 +158,21 @@ public:
       return 100.0*(m_dayEquityAnchor-equity)/MathMax(1.0,m_dayEquityAnchor);
    }
 
+   double RealizedLossPercent() const
+   {
+      return m_realizedLossPercent;
+   }
+
+   double OpenRiskPercent() const
+   {
+      return m_openRiskPercent;
+   }
+
+   double MaxDailyRiskPercent() const
+   {
+      return m_maxDailyRiskPercent;
+   }
+
    bool ShouldFlatten(const double equity) const
    {
       double dayLoss = EquityLossPercent(equity);
@@ -164,6 +186,20 @@ public:
    bool AllowNewTrade(const double upcomingRiskPercent,const double equityNow)
    {
       double dayLoss = EquityLossPercent(equityNow);
+      if(m_debugMode)
+      {
+         double totalRisk = m_realizedLossPercent + m_openRiskPercent + upcomingRiskPercent;
+         PrintFormat("DAILY DEBUG: dayLoss=%.2f%% realized=%.2f%% open=%.2f%% upcoming=%.2f%% limit=%.2f%%",
+                     dayLoss,
+                     m_realizedLossPercent,
+                     m_openRiskPercent,
+                     upcomingRiskPercent,
+                     m_maxDailyRiskPercent);
+         if(dayLoss + upcomingRiskPercent > m_maxDailyRiskPercent)
+            Print("DAILY DEBUG: dayLoss + upcoming exceeds limit -> reject");
+         else if((m_realizedLossPercent + m_openRiskPercent + upcomingRiskPercent) > m_maxDailyRiskPercent)
+            Print("DAILY DEBUG: realized + open + upcoming exceeds limit -> reject");
+      }
       if(dayLoss + upcomingRiskPercent > m_maxDailyRiskPercent)
          return false;
       double totalRisk = m_realizedLossPercent + m_openRiskPercent + upcomingRiskPercent;
