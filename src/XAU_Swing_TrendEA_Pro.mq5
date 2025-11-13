@@ -202,6 +202,7 @@ void EvaluateNewBar()
    }
 
    MqlRates rates[6];
+   ArraySetAsSeries(rates,true);
    int copied = CopyRates(_Symbol,PERIOD_H1,0,6,rates);
    if(copied<3)
       return;
