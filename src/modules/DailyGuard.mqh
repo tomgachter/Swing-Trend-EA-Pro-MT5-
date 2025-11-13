@@ -108,6 +108,11 @@ public:
       m_openRiskPercent = MathMax(0.0,m_openRiskPercent-riskPercent);
    }
 
+   void SetOpenRiskPercent(const double pct)
+   {
+      m_openRiskPercent = (pct>0.0 ? pct : 0.0);
+   }
+
    void RegisterResult(const double profit,const double balance)
    {
       if(m_dayBalanceAnchor<=0.0)

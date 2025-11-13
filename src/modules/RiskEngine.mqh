@@ -65,6 +65,46 @@ public:
       m_dailyGuard.Heartbeat(TimeCurrent(),AccountInfoDouble(ACCOUNT_EQUITY));
    }
 
+   double RecomputeOpenRiskPercent(PositionSizer &sizer,const ulong magic)
+   {
+      double capital = AccountInfoDouble(ACCOUNT_BALANCE);
+      if(capital<=0.0)
+         return 0.0;
+
+      double point = SymbolInfoDouble(_Symbol,SYMBOL_POINT);
+      if(point<=0.0)
+         point = _Point;
+      double perPoint = sizer.PipValuePerLot();
+
+      double totalRiskAmt = 0.0;
+      for(int i=PositionsTotal()-1; i>=0; --i)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(!PositionSelectByTicket(ticket))
+            continue;
+         if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
+            continue;
+         if((ulong)PositionGetInteger(POSITION_MAGIC)!=magic)
+            continue;
+
+         double vol = PositionGetDouble(POSITION_VOLUME);
+         double sl  = PositionGetDouble(POSITION_SL);
+         if(vol<=0.0 || sl<=0.0)
+            continue;
+
+         double price = PositionGetDouble(POSITION_PRICE_CURRENT);
+         double ptsToSL = MathAbs(price-sl)/MathMax(point,1e-9);
+         totalRiskAmt += ptsToSL*perPoint*vol;
+      }
+      return (capital>0.0 ? 100.0*(totalRiskAmt/capital) : 0.0);
+   }
+
+   void RefreshOpenRisk(PositionSizer &sizer,const ulong magic)
+   {
+      double pct = RecomputeOpenRiskPercent(sizer,magic);
+      m_dailyGuard.SetOpenRiskPercent(pct);
+   }
+
    bool EquityKillSwitchTriggered()
    {
       double equity = AccountInfoDouble(ACCOUNT_EQUITY);
