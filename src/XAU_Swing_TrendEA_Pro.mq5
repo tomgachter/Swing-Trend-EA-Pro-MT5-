@@ -220,7 +220,8 @@ void EvaluateNewBar()
       return;
    }
 
-   MqlRates rates[6];
+   // use a dynamic rates buffer because ArraySetAsSeries only affects dynamic arrays
+   MqlRates rates[];
    ArraySetAsSeries(rates,true);
    int copied = CopyRates(_Symbol,PERIOD_H1,0,6,rates);
    if(copied<3)
