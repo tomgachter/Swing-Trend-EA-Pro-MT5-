@@ -123,6 +123,7 @@ void OnTick()
 {
    gRisk.OnNewDay();
    gRegime.Update();
+   gRisk.RefreshOpenRisk(gSizer,MagicNumber);
 
    if(gRisk.DailyLimitBreached())
    {
