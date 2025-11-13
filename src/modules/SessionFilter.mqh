@@ -15,6 +15,7 @@ private:
    int      m_endMinutes;
    int      m_coreStart;
    int      m_coreEnd;
+   bool     m_debugMode;
 
    int ClampMinutes(const int minutes)
    {
@@ -25,7 +26,7 @@ private:
    }
 
 public:
-   SessionFilter()
+   SessionFilter(): m_debugMode(false)
    {
       Configure(7,0,14,45);
    }
@@ -51,6 +52,11 @@ public:
       m_coreEnd   = ClampMinutes(coreEnd);
    }
 
+   void SetDebugMode(const bool debug)
+   {
+      m_debugMode = debug;
+   }
+
    bool AllowsEntry(const datetime time, SessionWindow &window)
    {
       MqlDateTime dt;
@@ -58,18 +64,39 @@ public:
       if(dt.day_of_week==0 || dt.day_of_week==6)
       {
          window = SESSION_NONE;
+         if(m_debugMode)
+         {
+            PrintFormat("SESSION DEBUG: %s outside trading days (weekend) -> override due to debug",
+                        TimeToString(time,TIME_DATE|TIME_MINUTES));
+            window = SESSION_EDGE;
+            return true;
+         }
          return false;
       }
       int minutes = dt.hour*60 + dt.min;
       if(minutes < m_startMinutes || minutes > m_endMinutes)
       {
          window = SESSION_NONE;
+         if(m_debugMode)
+         {
+            PrintFormat("SESSION DEBUG: %s outside window %02d:%02d-%02d:%02d (minutes=%d) -> override due to debug",
+                        TimeToString(time,TIME_DATE|TIME_MINUTES),
+                        m_startMinutes/60,m_startMinutes%60,m_endMinutes/60,m_endMinutes%60,minutes);
+            window = SESSION_EDGE;
+            return true;
+         }
          return false;
       }
       if(minutes >= m_coreStart && minutes <= m_coreEnd)
          window = SESSION_CORE;
       else
          window = SESSION_EDGE;
+      if(m_debugMode)
+      {
+         PrintFormat("SESSION DEBUG: %s allowed (window=%s)",
+                     TimeToString(time,TIME_DATE|TIME_MINUTES),
+                     window==SESSION_CORE?"CORE":"EDGE");
+      }
       return true;
    }
 
