@@ -2,6 +2,7 @@
 #define __BROKER_UTILS_MQH__
 
 #include <Trade\Trade.mqh>
+#include <stderror.mqh>
 
 class BrokerUtils
 {
@@ -48,7 +49,8 @@ public:
          if(err==ERR_REQUOTE || err==ERR_OFF_QUOTES || err==ERR_PRICE_CHANGED)
          {
             Sleep(200*(attempt+1));
-            RefreshRates();
+            MqlTick tick;
+            SymbolInfoTick(_Symbol,tick);
             continue;
          }
          break;

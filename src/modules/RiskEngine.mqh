@@ -113,7 +113,7 @@ public:
       if(!OrderCalcMargin(type,_Symbol,volume,price,margin) || margin<=0.0)
          return false;
 
-      double freeMargin = AccountInfoDouble(ACCOUNT_FREEMARGIN);
+      double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
       double minRatio = 1.1;
       return (freeMargin > margin * minRatio);
    }
