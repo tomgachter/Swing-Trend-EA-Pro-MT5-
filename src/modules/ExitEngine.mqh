@@ -185,115 +185,114 @@ public:
 
       for(int i=m_count-1;i>=0;i--)
       {
-         TradeMetadata &meta = m_positions[i];
-         if(!PositionSelectByTicket(meta.ticket))
+         if(!PositionSelectByTicket(m_positions[i].ticket))
             continue;
 
-         double currentPrice = (meta.direction>0 ? bid : ask);
-         if(meta.direction>0)
-            meta.highestPrice = MathMax(meta.highestPrice,currentPrice);
+         double currentPrice = (m_positions[i].direction>0 ? bid : ask);
+         if(m_positions[i].direction>0)
+            m_positions[i].highestPrice = MathMax(m_positions[i].highestPrice,currentPrice);
          else
-            meta.lowestPrice = MathMin(meta.lowestPrice,currentPrice);
+            m_positions[i].lowestPrice = MathMin(m_positions[i].lowestPrice,currentPrice);
 
-         if(meta.rPoints<=0.0)
+         if(m_positions[i].rPoints<=0.0)
             continue;
 
-         double rToPrice = PointsToPrice(meta.rPoints,point);
+         double rToPrice = PointsToPrice(m_positions[i].rPoints,point);
          if(rToPrice<=0.0)
             continue;
 
-         double currentR = (currentPrice - meta.entryPrice)*meta.direction/(rToPrice);
+         double currentR = (currentPrice - m_positions[i].entryPrice)*m_positions[i].direction/(rToPrice);
 
          double currentSL = PositionGetDouble(POSITION_SL);
 
          // Break-even management
-         if(!meta.breakEvenDone && m_breakEvenR>0.0 && currentR >= m_breakEvenR)
+         if(!m_positions[i].breakEvenDone && m_breakEvenR>0.0 && currentR >= m_breakEvenR)
          {
-            double breakEvenPrice = meta.entryPrice;
-            if((meta.direction>0 && breakEvenPrice>currentSL+minStep) || (meta.direction<0 && breakEvenPrice<currentSL-minStep))
+            double breakEvenPrice = m_positions[i].entryPrice;
+            if((m_positions[i].direction>0 && breakEvenPrice>currentSL+minStep) || (m_positions[i].direction<0 && breakEvenPrice<currentSL-minStep))
             {
-               if(broker.ModifySL(meta.ticket,breakEvenPrice))
+               if(broker.ModifySL(m_positions[i].ticket,breakEvenPrice))
                {
-                  meta.breakEvenDone = true;
+                  m_positions[i].breakEvenDone = true;
                   if(m_verbose)
-                     PrintFormat("EXIT DEBUG: break-even set ticket=%I64u sl=%.2f",meta.ticket,breakEvenPrice);
+                     PrintFormat("EXIT DEBUG: break-even set ticket=%I64u sl=%.2f",m_positions[i].ticket,breakEvenPrice);
                }
             }
          }
 
          // Partial close
-         if(!meta.partialDone && m_partialFraction>0.0 && m_partialFraction<1.0 && m_partialTP_R>0.0 && currentR >= m_partialTP_R)
+         if(!m_positions[i].partialDone && m_partialFraction>0.0 && m_partialFraction<1.0 && m_partialTP_R>0.0 && currentR >= m_partialTP_R)
          {
             double volume = PositionGetDouble(POSITION_VOLUME);
             double partialVolume = sizer.NormalizeVolume(volume*m_partialFraction);
             if(partialVolume>0.0 && partialVolume<volume)
             {
-               if(broker.ClosePartial(meta.ticket,partialVolume))
+               if(broker.ClosePartial(m_positions[i].ticket,partialVolume))
                {
-                  meta.partialDone = true;
-                  if(!meta.breakEvenDone)
+                  m_positions[i].partialDone = true;
+                  if(!m_positions[i].breakEvenDone)
                   {
-                     double breakEvenPrice = meta.entryPrice;
-                     if(broker.ModifySL(meta.ticket,breakEvenPrice))
+                     double breakEvenPrice = m_positions[i].entryPrice;
+                     if(broker.ModifySL(m_positions[i].ticket,breakEvenPrice))
                      {
-                        meta.breakEvenDone = true;
+                        m_positions[i].breakEvenDone = true;
                      }
                   }
                   if(m_verbose)
-                     PrintFormat("EXIT DEBUG: partial closed ticket=%I64u volume=%.2f",meta.ticket,partialVolume);
+                     PrintFormat("EXIT DEBUG: partial closed ticket=%I64u volume=%.2f",m_positions[i].ticket,partialVolume);
                }
             }
          }
 
          // Trailing stop (only if no hard TP)
-         if(!meta.useHardFinalTp && m_trailStart_R>0.0 && m_trailDistance_R>0.0 && currentR >= m_trailStart_R)
+         if(!m_positions[i].useHardFinalTp && m_trailStart_R>0.0 && m_trailDistance_R>0.0 && currentR >= m_trailStart_R)
          {
-            double extreme = (meta.direction>0 ? meta.highestPrice : meta.lowestPrice);
-            double trailPrice = extreme - meta.direction*m_trailDistance_R*rToPrice;
+            double extreme = (m_positions[i].direction>0 ? m_positions[i].highestPrice : m_positions[i].lowestPrice);
+            double trailPrice = extreme - m_positions[i].direction*m_trailDistance_R*rToPrice;
             bool improved = false;
-            if(meta.direction>0)
+            if(m_positions[i].direction>0)
                improved = (trailPrice > currentSL + minStep);
             else
                improved = (trailPrice < currentSL - minStep);
             if(improved)
             {
-               if(meta.direction>0)
+               if(m_positions[i].direction>0)
                   trailPrice = MathMin(trailPrice,currentPrice - minStep);
                else
                   trailPrice = MathMax(trailPrice,currentPrice + minStep);
-               if(broker.ModifySL(meta.ticket,trailPrice) && m_verbose)
-                  PrintFormat("EXIT DEBUG: trailing stop adjusted ticket=%I64u newSL=%.2f",meta.ticket,trailPrice);
+               if(broker.ModifySL(m_positions[i].ticket,trailPrice) && m_verbose)
+                  PrintFormat("EXIT DEBUG: trailing stop adjusted ticket=%I64u newSL=%.2f",m_positions[i].ticket,trailPrice);
             }
          }
 
          // Time-based exit
          if(m_useTimeStop)
          {
-            double elapsedSeconds = (double)(TimeCurrent() - meta.openTime);
+            double elapsedSeconds = (double)(TimeCurrent() - m_positions[i].openTime);
             int barsInTrade = (int)MathFloor(elapsedSeconds/periodSeconds);
             if(barsInTrade >= m_maxBarsInTrade)
             {
                if(currentR <= 0.0)
                {
-                  if(broker.ClosePosition(meta.ticket) && m_verbose)
-                     PrintFormat("EXIT DEBUG: time stop closed ticket=%I64u at R=%.2f",meta.ticket,currentR);
+                  if(broker.ClosePosition(m_positions[i].ticket) && m_verbose)
+                     PrintFormat("EXIT DEBUG: time stop closed ticket=%I64u at R=%.2f",m_positions[i].ticket,currentR);
                   continue;
                }
-               if(!meta.timeStopTightened && m_timeStopProtectR>0.0)
+               if(!m_positions[i].timeStopTightened && m_timeStopProtectR>0.0)
                {
-                  double protective = meta.entryPrice + meta.direction*m_timeStopProtectR*rToPrice;
-                  bool canImprove = (meta.direction>0 ? protective > currentSL + minStep : protective < currentSL - minStep);
+                  double protective = m_positions[i].entryPrice + m_positions[i].direction*m_timeStopProtectR*rToPrice;
+                  bool canImprove = (m_positions[i].direction>0 ? protective > currentSL + minStep : protective < currentSL - minStep);
                   if(canImprove)
                   {
-                     if(meta.direction>0)
+                     if(m_positions[i].direction>0)
                         protective = MathMin(protective,currentPrice - minStep);
                      else
                         protective = MathMax(protective,currentPrice + minStep);
-                     if(broker.ModifySL(meta.ticket,protective))
+                     if(broker.ModifySL(m_positions[i].ticket,protective))
                      {
-                        meta.timeStopTightened = true;
+                        m_positions[i].timeStopTightened = true;
                         if(m_verbose)
-                           PrintFormat("EXIT DEBUG: time stop tightened ticket=%I64u newSL=%.2f",meta.ticket,protective);
+                           PrintFormat("EXIT DEBUG: time stop tightened ticket=%I64u newSL=%.2f",m_positions[i].ticket,protective);
                      }
                   }
                }

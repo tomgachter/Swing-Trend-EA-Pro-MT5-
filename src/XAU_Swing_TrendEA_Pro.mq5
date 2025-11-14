@@ -105,7 +105,10 @@ datetime      gEntryHistory[];
 int           gFallbackWeekId = -1;
 bool          gFallbackUsedThisWeek = false;
 bool          gVerboseDecisionLog = false;
-const int     RECENT_TRADE_WINDOW = 10;
+enum RecentTradeConfig
+{
+   RECENT_TRADE_WINDOW = 10
+};
 double        gRecentTradePnL[RECENT_TRADE_WINDOW];
 int           gRecentTradeCount = 0;
 
