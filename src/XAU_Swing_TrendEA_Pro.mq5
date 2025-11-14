@@ -35,13 +35,15 @@ input int               SessionStartMinute = 0;
 input int               SessionEndHour = 14;
 input int               SessionEndMinute = 45;
 // Bias tuning
-input int               MinVotesForBias      = 2;      // 1..3 (default 2)
-input double            BiasSlopeThreshold   = 0.015;  // was 0.03
+input int               BiasVotesRequired     = 2;    // Mehrheitsvotum
+input double            BiasSlopeThH1         = 0.020;
+input double            BiasSlopeThH4         = 0.018;
+input double            BiasSlopeThD1         = 0.015;
+input bool              AllowNeutralBiasOnEdge= true; // Edge-Session: starkes Set-up darf trotz neutralem Bias
 // Entry sensitivity
-input double            PullbackBandATR      = 0.30;   // was ~0.60 implicit
-input double            PullbackMomentumATR  = 0.35;   // was ~0.55 implicit
-input double            BreakoutImpulseATR   = 0.35;   // was ~0.50 implicit
-input int               BreakoutLookback     = 6;      // bars for box calc (min 4)
+input double            PullbackBodyATRMin    = 0.35; // bisher ~0.55 → Frequenz rauf
+input double            BreakoutImpulseATRMin = 0.35; // bisher ~0.45–0.55 → Frequenz rauf
+input int               BreakoutRangeBars     = 5;    // bisher 6 → etwas früher
 // Entry timeframe
 input ENUM_TIMEFRAMES   EntryTF              = PERIOD_H1;
 // Fallback relaxation
@@ -97,7 +99,7 @@ int OnInit()
    gSession.Configure(SessionStartHour,SessionStartMinute,SessionEndHour,SessionEndMinute);
    gSession.SetDebugMode(DebugMode);
    gEntry.Configure(RandomizeEntryExit);
-   gEntry.ConfigureSensitivity(PullbackBandATR,PullbackMomentumATR,BreakoutImpulseATR,BreakoutLookback);
+   gEntry.ConfigureSensitivity(PullbackBodyATRMin,BreakoutImpulseATRMin,BreakoutRangeBars);
    gEntry.SetMultipliers(StopLossATRMultiplier,PartialTPATRMultiplier,TrailingATRMultiplier);
    gExit.Configure(gEntry.TrailMultiplier(),15.0);
    string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MagicNumber);
@@ -116,8 +118,9 @@ int OnInit()
       Print("Failed to initialise bias engine");
       return INIT_FAILED;
    }
-   gBias.SetMinVotes(MinVotesForBias);
-   gBias.SetSlopeThreshold(BiasSlopeThreshold);
+   gBias.ConfigureThresholds(BiasVotesRequired,BiasSlopeThH1,BiasSlopeThH4,BiasSlopeThD1);
+   gBias.SetSlopeThreshold(1.0);
+   gBias.SetDebug(gVerboseDecisionLog);
    if(!gSizer.Init(_Symbol))
    {
       Print("Failed to initialise position sizer");
@@ -205,17 +208,16 @@ void EvaluateNewBar()
       gFallbackUsedThisWeek = false;
    }
    bool useFallback = ShouldUseFallbackEntry(signalTime,recentEntries);
-   double slopeThreshold = BiasSlopeThreshold;
+   double slopeScale = 1.0;
    if(useFallback)
-      slopeThreshold *= 0.5;
-   gBias.SetSlopeThreshold(slopeThreshold);
-   gBias.SetMinVotes(MinVotesForBias);
+      slopeScale *= 0.5;
+   gBias.SetSlopeThreshold(slopeScale);
    // Diagnose: Zuvor brach die Entry-Kette still ab. Das detaillierte Logging macht jetzt sichtbar,
    // welche Stufe (Bias/Session/Daten) einen Trade verhindert.
    if(gVerboseDecisionLog)
    {
-      PrintFormat("ENTRY TRACE: new bar %s fallback=%s slopeThreshold=%.4f entries7d=%d",TimeToString(signalTime,TIME_DATE|TIME_MINUTES),
-                  useFallback?"true":"false",slopeThreshold,recentEntries);
+      PrintFormat("ENTRY TRACE: new bar %s fallback=%s slopeScale=%.2f entries7d=%d",TimeToString(signalTime,TIME_DATE|TIME_MINUTES),
+                  useFallback?"true":"false",slopeScale,recentEntries);
    }
    if(!gBias.Update(gRegime))
    {
@@ -240,7 +242,7 @@ void EvaluateNewBar()
    // use a dynamic rates buffer because ArraySetAsSeries only affects dynamic arrays
    MqlRates rates[];
    ArraySetAsSeries(rates,true);
-   int barsNeeded = MathMax(6,BreakoutLookback+2);
+   int barsNeeded = MathMax(6,BreakoutRangeBars+2);
    int copied = CopyRates(_Symbol,EntryTF,0,barsNeeded,rates);
    if(copied<3)
    {
@@ -250,7 +252,7 @@ void EvaluateNewBar()
    }
 
    EntrySignal signal;
-   if(!gEntry.Evaluate(gBias,gRegime,window,rates,copied,useFallback,gVerboseDecisionLog,signal))
+   if(!gEntry.Evaluate(gBias,gRegime,window,rates,copied,useFallback,AllowNeutralBiasOnEdge,gVerboseDecisionLog,signal))
    {
       if(gVerboseDecisionLog)
          Print("ENTRY TRACE: EntryEngine returned no signal");
