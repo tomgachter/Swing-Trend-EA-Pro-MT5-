@@ -15,6 +15,7 @@ private:
    double          m_lastEmaD1;
    int             m_direction;
    double          m_slopeThreshold;
+   int             m_minVotes;
 
    double Slope(const int handle,const ENUM_TIMEFRAMES tf,const double atr)
    {
@@ -32,7 +33,8 @@ private:
 
 public:
    BiasEngine(): m_symbol(_Symbol), m_handleH1(INVALID_HANDLE), m_handleH4(INVALID_HANDLE), m_handleD1(INVALID_HANDLE),
-                 m_lastEmaH1(0.0), m_lastEmaH4(0.0), m_lastEmaD1(0.0), m_direction(0), m_slopeThreshold(0.05)
+                 m_lastEmaH1(0.0), m_lastEmaH4(0.0), m_lastEmaD1(0.0), m_direction(0), m_slopeThreshold(0.05),
+                 m_minVotes(2)
   {
   }
 
@@ -122,9 +124,10 @@ public:
       bool longSlopeOk = (slopeScore>longBarrier && slopeH1>-threshold && slopeH4>-threshold*0.8 && slopeD1>-threshold*0.6);
       bool shortSlopeOk = (slopeScore<-shortBarrier && slopeH1<-threshold && slopeH4<-threshold*0.8 && slopeD1<-threshold*0.6);
 
-      if(votesLong>=2 && longSlopeOk)
+      int requiredVotes = MathMax(1,MathMin(3,m_minVotes));
+      if(votesLong>=requiredVotes && longSlopeOk)
          m_direction = 1;
-      else if(votesShort>=2 && shortSlopeOk)
+      else if(votesShort>=requiredVotes && shortSlopeOk)
          m_direction = -1;
       else
          m_direction = 0;
@@ -136,6 +139,10 @@ public:
    void SetSlopeThreshold(const double threshold)
    {
       m_slopeThreshold = (threshold>=0.0 ? threshold : 0.0);
+   }
+   void SetMinVotes(const int votes)
+   {
+      m_minVotes = MathMax(1,MathMin(3,votes));
    }
 };
 

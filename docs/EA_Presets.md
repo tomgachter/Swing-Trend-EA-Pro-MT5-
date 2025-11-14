@@ -8,6 +8,19 @@ The EA now derives its configuration from three levers:
 
 This document summarises the adaptive preset values that are applied automatically on every new bar. When legacy `.set` files provide conflicting values the preset layer below wins.
 
+## Additional Input Controls
+
+To raise signal cadence you can now adjust these exposed inputs (suggested ranges in brackets):
+
+* `MinVotesForBias` (1–3, default 2) – minimum EMA votes required for directional bias.
+* `BiasSlopeThreshold` (0.010–0.030) – base EMA slope ratio; lower numbers admit flatter trends.
+* `PullbackBandATR` (0.20–0.60) – ATR multiple for the pullback touch band, scaled per regime.
+* `PullbackMomentumATR` (0.20–0.60) – ATR multiple for the pullback candle body/momentum gate.
+* `BreakoutImpulseATR` (0.25–0.60) – ATR multiple demanded from breakout bodies before entry.
+* `BreakoutLookback` (4–10) – number of completed bars forming the breakout box.
+* `EntryTF` (PERIOD_M15–PERIOD_H4) – chart timeframe feeding the entry engine (bias votes stay on H1/H4/D1).
+* `EnableWeekdayFallback`, `FallbackMinHour`, `FallbackMaxPer7D` – weekday relaxation controls for the fallback entry cadence.
+
 ## Entry & Exit Map
 
 | Aggressiveness | Regime | Trend votes | ADX Min | Donchian Bars | Breakout Buffer (ATR) | Trail ATR K | Partial | Partial Trigger | Time Stop | Take Profit |

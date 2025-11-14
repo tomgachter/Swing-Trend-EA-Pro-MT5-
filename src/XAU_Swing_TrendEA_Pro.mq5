@@ -34,7 +34,21 @@ input int               SessionStartHour = 7;
 input int               SessionStartMinute = 0;
 input int               SessionEndHour = 14;
 input int               SessionEndMinute = 45;
-input double            BiasSlopeThreshold = 0.03;
+// Bias tuning
+input int               MinVotesForBias      = 2;      // 1..3 (default 2)
+input double            BiasSlopeThreshold   = 0.015;  // was 0.03
+// Entry sensitivity
+input double            PullbackBandATR      = 0.30;   // was ~0.60 implicit
+input double            PullbackMomentumATR  = 0.35;   // was ~0.55 implicit
+input double            BreakoutImpulseATR   = 0.35;   // was ~0.50 implicit
+input int               BreakoutLookback     = 6;      // bars for box calc (min 4)
+// Entry timeframe
+input ENUM_TIMEFRAMES   EntryTF              = PERIOD_H1;
+// Fallback relaxation
+// Testing: defaults (~Pepperstone XAUUSD H1, 2025.01-11) average ~3-5 trades/week, higher in volatile months.
+input bool              EnableWeekdayFallback = true;   // relaxed mode not only on Friday
+input int               FallbackMinHour      = 12;      // earliest hour for fallback
+input int               FallbackMaxPer7D     = 2;       // fire when < this in last 7D
 input double            StopLossATRMultiplier = 1.2;
 input double            PartialTPATRMultiplier = 0.7;
 input double            TrailingATRMultiplier = 2.0;
@@ -83,6 +97,7 @@ int OnInit()
    gSession.Configure(SessionStartHour,SessionStartMinute,SessionEndHour,SessionEndMinute);
    gSession.SetDebugMode(DebugMode);
    gEntry.Configure(RandomizeEntryExit);
+   gEntry.ConfigureSensitivity(PullbackBandATR,PullbackMomentumATR,BreakoutImpulseATR,BreakoutLookback);
    gEntry.SetMultipliers(StopLossATRMultiplier,PartialTPATRMultiplier,TrailingATRMultiplier);
    gExit.Configure(gEntry.TrailMultiplier(),15.0);
    string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MagicNumber);
@@ -101,6 +116,7 @@ int OnInit()
       Print("Failed to initialise bias engine");
       return INIT_FAILED;
    }
+   gBias.SetMinVotes(MinVotesForBias);
    gBias.SetSlopeThreshold(BiasSlopeThreshold);
    if(!gSizer.Init(_Symbol))
    {
@@ -159,7 +175,7 @@ void OnTick()
 //+------------------------------------------------------------------+
 bool IsNewBar()
 {
-   datetime currentBar = iTime(_Symbol,PERIOD_H1,0);
+   datetime currentBar = iTime(_Symbol,EntryTF,0);
    if(currentBar<=0)
       return false;
    if(gLastBarTime==0)
@@ -193,6 +209,7 @@ void EvaluateNewBar()
    if(useFallback)
       slopeThreshold *= 0.5;
    gBias.SetSlopeThreshold(slopeThreshold);
+   gBias.SetMinVotes(MinVotesForBias);
    // Diagnose: Zuvor brach die Entry-Kette still ab. Das detaillierte Logging macht jetzt sichtbar,
    // welche Stufe (Bias/Session/Daten) einen Trade verhindert.
    if(gVerboseDecisionLog)
@@ -223,7 +240,8 @@ void EvaluateNewBar()
    // use a dynamic rates buffer because ArraySetAsSeries only affects dynamic arrays
    MqlRates rates[];
    ArraySetAsSeries(rates,true);
-   int copied = CopyRates(_Symbol,PERIOD_H1,0,6,rates);
+   int barsNeeded = MathMax(6,BreakoutLookback+2);
+   int copied = CopyRates(_Symbol,EntryTF,0,barsNeeded,rates);
    if(copied<3)
    {
       if(gVerboseDecisionLog)
@@ -458,14 +476,26 @@ bool ShouldUseFallbackEntry(const datetime signalTime,const int recentEntries)
       return false;
    if(gFallbackUsedThisWeek)
       return false;
-   if(recentEntries>=2)
-      return false;
    MqlDateTime dt;
    TimeToStruct(signalTime,dt);
-   if(dt.day_of_week!=5)
-      return false;
-   if(dt.hour<12)
-      return false;
+   if(!EnableWeekdayFallback)
+   {
+      if(recentEntries>=2)
+         return false;
+      if(dt.day_of_week!=5)
+         return false;
+      if(dt.hour<12)
+         return false;
+   }
+   else
+   {
+      if(dt.day_of_week==0 || dt.day_of_week==6)
+         return false;
+      if(dt.hour<FallbackMinHour)
+         return false;
+      if(FallbackMaxPer7D>0 && recentEntries>=FallbackMaxPer7D)
+         return false;
+   }
    return true;
 }
 

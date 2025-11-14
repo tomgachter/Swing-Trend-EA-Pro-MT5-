@@ -32,24 +32,32 @@ private:
    double m_tpAtrMult;
    double m_trailAtrMult;
    bool   m_randomize;
+   double m_pullbackBandAtr;
+   double m_pullbackMomentumAtr;
+   double m_breakoutImpulseAtr;
+   int    m_breakoutLookback;
 
    bool PullbackSignal(const int direction,const MqlRates &barPrev,const MqlRates &barPrev2,const double ema,const double atr,
                        const bool relaxedMomentum,const RegimeBucket bucket,const bool verbose)
    {
-      double bandMult = 0.45;
+      const double LOW_BAND_SCALE = 0.60/0.45;
+      const double HIGH_BAND_SCALE = 0.40/0.45;
+      double bandMult = m_pullbackBandAtr;
       if(bucket==REGIME_LOW)
-         bandMult = 0.60;
+         bandMult *= LOW_BAND_SCALE;
       else if(bucket==REGIME_HIGH)
-         bandMult = 0.40;
+         bandMult *= HIGH_BAND_SCALE;
       if(relaxedMomentum)
          bandMult *= 0.75;
       double band = bandMult*atr;
 
-      double momentumThreshold = 0.45;
+      const double LOW_MOMENTUM_SCALE = 0.35/0.45;
+      const double HIGH_MOMENTUM_SCALE = 0.40/0.45;
+      double momentumThreshold = m_pullbackMomentumAtr;
       if(bucket==REGIME_LOW)
-         momentumThreshold = 0.35;
+         momentumThreshold *= LOW_MOMENTUM_SCALE;
       else if(bucket==REGIME_HIGH)
-         momentumThreshold = 0.40;
+         momentumThreshold *= HIGH_MOMENTUM_SCALE;
       if(relaxedMomentum)
          momentumThreshold *= 0.5;
 
@@ -64,10 +72,8 @@ private:
       if(direction>0)
       {
          touched = (barPrev.low <= ema - band);
-         if(!touched)
-            touched = (barPrev.low <= ema - 0.35*atr);
-         if(relaxedMomentum && !touched)
-            touched = (barPrev.low <= ema);
+         if(!touched && relaxedMomentum)
+            touched = (barPrev.low <= ema + 0.10*atr);
          double tolerance = (relaxedMomentum ? 0.15 : 0.05)*atr;
          closeOk = (barPrev.close >= ema - tolerance);
          bool priorDown = (barPrev2.close < barPrev2.open);
@@ -77,10 +83,8 @@ private:
       else if(direction<0)
       {
          touched = (barPrev.high >= ema + band);
-         if(!touched)
-            touched = (barPrev.high >= ema + 0.35*atr);
-         if(relaxedMomentum && !touched)
-            touched = (barPrev.high >= ema);
+         if(!touched && relaxedMomentum)
+            touched = (barPrev.high >= ema - 0.10*atr);
          double tolerance = (relaxedMomentum ? 0.15 : 0.05)*atr;
          closeOk = (barPrev.close <= ema + tolerance);
          bool priorUp = (barPrev2.close > barPrev2.open);
@@ -107,7 +111,8 @@ private:
    bool BreakoutSignal(const int direction,MqlRates &bars[],const int count,const double atr,const SessionWindow window,
                        const bool relaxedMomentum,const RegimeBucket bucket,const bool verbose)
    {
-      if(count<4)
+      int lookback = MathMax(4,m_breakoutLookback);
+      if(count<lookback+2)
       {
          if(verbose)
             Print("ENTRY TRACE: breakout rejected -> not enough bars");
@@ -122,27 +127,31 @@ private:
       MqlRates barPrev = bars[1];
       double rangeHigh = -DBL_MAX;
       double rangeLow  = DBL_MAX;
-      for(int i=2;i<=5 && i<count;i++)
+      int maxIndex = MathMin(count-1,1+lookback);
+      for(int i=2;i<=maxIndex;i++)
       {
          rangeHigh = MathMax(rangeHigh,bars[i].high);
          rangeLow  = MathMin(rangeLow,bars[i].low);
       }
       double box = rangeHigh-rangeLow;
-      double maxBoxMult = 1.0;
+      const double MAX_BOX_BASE = 1.0;
+      double maxBoxMult = MAX_BOX_BASE;
       if(bucket==REGIME_LOW)
-         maxBoxMult = 1.25;
+         maxBoxMult = MAX_BOX_BASE*1.25;
       else if(bucket==REGIME_HIGH)
-         maxBoxMult = 0.85;
+         maxBoxMult = MAX_BOX_BASE*0.85;
       if(relaxedMomentum)
          maxBoxMult *= 1.15;
       double minBoxMult = 0.15;
       bool boxOk = (box>atr*minBoxMult && box<=atr*maxBoxMult);
 
-      double impulseMult = 0.45;
+      const double LOW_IMPULSE_SCALE = 0.33/0.45;
+      const double HIGH_IMPULSE_SCALE = 0.40/0.45;
+      double impulseMult = m_breakoutImpulseAtr;
       if(bucket==REGIME_LOW)
-         impulseMult = 0.33;
+         impulseMult *= LOW_IMPULSE_SCALE;
       else if(bucket==REGIME_HIGH)
-         impulseMult = 0.40;
+         impulseMult *= HIGH_IMPULSE_SCALE;
       double body = MathAbs(barPrev.close-barPrev.open);
       bool impulse = (body >= impulseMult*atr);
       if(relaxedMomentum)
@@ -179,13 +188,28 @@ private:
    }
 
 public:
-   EntryEngine(): m_slAtrMult(1.4), m_tpAtrMult(0.8), m_trailAtrMult(2.5), m_randomize(false)
+   EntryEngine(): m_slAtrMult(1.4), m_tpAtrMult(0.8), m_trailAtrMult(2.5), m_randomize(false),
+                  m_pullbackBandAtr(0.45), m_pullbackMomentumAtr(0.45),
+                  m_breakoutImpulseAtr(0.45), m_breakoutLookback(4)
    {
    }
 
    void Configure(const bool randomize)
    {
       m_randomize = randomize;
+   }
+
+   void ConfigureSensitivity(const double pullbackBandAtr,const double pullbackMomentumAtr,
+                             const double breakoutImpulseAtr,const int breakoutLookback)
+   {
+      if(pullbackBandAtr>0.0)
+         m_pullbackBandAtr = pullbackBandAtr;
+      if(pullbackMomentumAtr>0.0)
+         m_pullbackMomentumAtr = pullbackMomentumAtr;
+      if(breakoutImpulseAtr>0.0)
+         m_breakoutImpulseAtr = breakoutImpulseAtr;
+      if(breakoutLookback>=4)
+         m_breakoutLookback = breakoutLookback;
    }
 
    void SetMultipliers(const double slMult,const double tpMult,const double trailMult)
