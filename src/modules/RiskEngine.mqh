@@ -24,13 +24,14 @@ private:
    double      m_slippageBudgetPts;
    bool        m_debugMode;
    bool        m_verboseMode;
+   bool        m_killSwitchLatched;
 
 public:
    RiskEngine(): m_maxEquityDDPercent(12.0), m_equityPeak(0.0), m_initialEquity(0.0),
                  m_riskMode(RISK_PERCENT_PER_TRADE), m_riskSetting(0.5),
                  m_useDynamicRisk(false), m_lowFactor(0.8), m_normalFactor(1.0), m_highFactor(1.2),
                  m_dayStartHour(0), m_persistKey(""), m_useStaticOverallDD(false), m_slippageBudgetPts(0.0),
-                 m_debugMode(false), m_verboseMode(false)
+                 m_debugMode(false), m_verboseMode(false), m_killSwitchLatched(false)
    {
    }
 
@@ -47,6 +48,7 @@ public:
       m_dailyGuard.Configure(maxDailyRisk,dayStartHour,persistKey);
       double equity = AccountInfoDouble(ACCOUNT_EQUITY);
       m_equityPeak = equity;
+      m_killSwitchLatched = false;
       if(m_persistKey!="")
       {
          string initKey = m_persistKey+"_INIT";
@@ -155,14 +157,24 @@ public:
          if(m_initialEquity<=0.0)
             return false;
          double ddStatic = 100.0*(m_initialEquity-equity)/MathMax(1.0,m_initialEquity);
-         return (ddStatic >= m_maxEquityDDPercent);
+         if(ddStatic >= m_maxEquityDDPercent)
+         {
+            m_killSwitchLatched = true;
+            return true;
+         }
+         return false;
       }
       if(equity>m_equityPeak)
          m_equityPeak = equity;
       if(m_equityPeak<=0.0)
          return false;
       double ddPercent = (m_equityPeak-equity)/MathMax(1.0,m_equityPeak)*100.0;
-      return (ddPercent >= m_maxEquityDDPercent);
+      if(ddPercent >= m_maxEquityDDPercent)
+      {
+         m_killSwitchLatched = true;
+         return true;
+      }
+      return false;
    }
 
    void SetDynamicRiskEnabled(const bool enabled)
@@ -183,8 +195,20 @@ public:
       m_dailyGuard.SetVerboseMode(verbose);
    }
 
+   bool KillSwitchLatched() const
+   {
+      return m_killSwitchLatched;
+   }
+
    bool AllowNewTrade(const double stopPoints,PositionSizer &sizer,RegimeFilter &regime,double &volume,double &riskPercent,const double manualRiskScale=1.0)
    {
+      if(m_killSwitchLatched)
+      {
+         if(m_verboseMode)
+            Print("RISK DEBUG: kill switch active -> entry blocked");
+         return false;
+      }
+
       if(manualRiskScale<=0.0)
       {
          if(m_verboseMode)

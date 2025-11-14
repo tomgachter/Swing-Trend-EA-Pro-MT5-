@@ -86,6 +86,19 @@ private:
    bool          m_entryHeaderWritten;
    bool          m_summaryHeaderWritten;
 
+   struct TelemetryConfigKV
+   {
+      string key;
+      string value;
+   };
+
+   TelemetryConfigKV m_configSnapshot[16];
+   int               m_configSnapshotCount;
+   string            m_qualityLabel;
+   string            m_trendLabel;
+   bool              m_entryConfigWritten;
+   bool              m_summaryConfigWritten;
+
    void RemoveAt(const int index)
    {
       if(index<0 || index>=m_count)
@@ -111,6 +124,24 @@ private:
       return m_logFolder + "/" + fileName;
    }
 
+   void WriteConfigHeader(const int handle,bool &writtenFlag)
+   {
+      if(writtenFlag)
+         return;
+      if(handle==INVALID_HANDLE)
+      {
+         writtenFlag = true;
+         return;
+      }
+      if(m_qualityLabel!="")
+         FileWrite(handle,"#quality_mode",m_qualityLabel);
+      if(m_trendLabel!="")
+         FileWrite(handle,"#trend_filter",m_trendLabel);
+      for(int i=0;i<m_configSnapshotCount;i++)
+         FileWrite(handle,"#input",m_configSnapshot[i].key,m_configSnapshot[i].value);
+      writtenFlag = true;
+   }
+
    void LogRegistration(const TradeMetadata &meta,const double volume)
    {
       if(!m_enableTelemetry)
@@ -122,6 +153,10 @@ private:
       {
          FileSeek(handle,0,SEEK_END);
          long pos = FileTell(handle);
+         if(pos==0)
+            WriteConfigHeader(handle,m_entryConfigWritten);
+         else
+            m_entryConfigWritten = true;
          if(pos==0 && !m_entryHeaderWritten)
          {
             FileWrite(handle,
@@ -174,6 +209,10 @@ private:
          return;
       FileSeek(handle,0,SEEK_END);
       long pos = FileTell(handle);
+      if(pos==0)
+         WriteConfigHeader(handle,m_summaryConfigWritten);
+      else
+         m_summaryConfigWritten = true;
       if(pos==0 && !m_summaryHeaderWritten)
       {
          FileWrite(handle,
@@ -243,7 +282,9 @@ public:
                  m_entryTimeframe(PERIOD_H1), m_verbose(false),
                  m_enableTelemetry(false), m_logFolder("XAU_Swing_TrendEA_Pro"),
                  m_entryFileName("trade_log.csv"), m_summaryFileName("trade_telemetry.csv"),
-                 m_entryHeaderWritten(false), m_summaryHeaderWritten(false)
+                 m_entryHeaderWritten(false), m_summaryHeaderWritten(false),
+                 m_configSnapshotCount(0), m_qualityLabel(""), m_trendLabel(""),
+                 m_entryConfigWritten(false), m_summaryConfigWritten(false)
    {
    }
 
@@ -302,6 +343,30 @@ public:
       }
       m_entryHeaderWritten = false;
       m_summaryHeaderWritten = false;
+      m_entryConfigWritten = false;
+      m_summaryConfigWritten = false;
+   }
+
+   void SetTelemetryConfigSnapshot(const string qualityLabel,const string trendLabel,
+                                   string &inputNames[],string &inputValues[],const int count)
+   {
+      m_qualityLabel = qualityLabel;
+      m_trendLabel = trendLabel;
+      int capacity = ArraySize(m_configSnapshot);
+      int copyCount = (count<capacity ? count : capacity);
+      m_configSnapshotCount = copyCount;
+      for(int i=0;i<copyCount;i++)
+      {
+         m_configSnapshot[i].key = inputNames[i];
+         m_configSnapshot[i].value = inputValues[i];
+      }
+      for(int i=copyCount;i<capacity;i++)
+      {
+         m_configSnapshot[i].key = "";
+         m_configSnapshot[i].value = "";
+      }
+      m_entryConfigWritten = false;
+      m_summaryConfigWritten = false;
    }
 
    void Register(const ulong ticket,const EntrySignal &signal,const double rPoints,const double volume,const double riskPercent)
