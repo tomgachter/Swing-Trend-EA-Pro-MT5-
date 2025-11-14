@@ -16,13 +16,16 @@ private:
    string            m_symbol;
    ENUM_TIMEFRAMES   m_tfH1;
    ENUM_TIMEFRAMES   m_tfH4;
+   ENUM_TIMEFRAMES   m_tfD1;
    int               m_atrPeriod;
    int               m_handleH1;
    int               m_handleH4;
+   int               m_handleD1;
    double            m_lowThreshold;
    double            m_highThreshold;
    double            m_lastAtrH1;
    double            m_lastAtrH4;
+   double            m_lastAtrD1;
    RegimeBucket      m_currentBucket;
    datetime          m_lastUpdateBarTime;
 
@@ -44,9 +47,9 @@ private:
    }
 
 public:
-   RegimeFilter() : m_symbol(_Symbol), m_tfH1(PERIOD_H1), m_tfH4(PERIOD_H4), m_atrPeriod(14),
-                    m_handleH1(INVALID_HANDLE), m_handleH4(INVALID_HANDLE), m_lowThreshold(0.0),
-                    m_highThreshold(0.0), m_lastAtrH1(0.0), m_lastAtrH4(0.0),
+   RegimeFilter() : m_symbol(_Symbol), m_tfH1(PERIOD_H1), m_tfH4(PERIOD_H4), m_tfD1(PERIOD_D1), m_atrPeriod(14),
+                    m_handleH1(INVALID_HANDLE), m_handleH4(INVALID_HANDLE), m_handleD1(INVALID_HANDLE), m_lowThreshold(0.0),
+                    m_highThreshold(0.0), m_lastAtrH1(0.0), m_lastAtrH4(0.0), m_lastAtrD1(0.0),
                     m_currentBucket(REGIME_NORMAL), m_lastUpdateBarTime(0)
    {
    }
@@ -57,7 +60,8 @@ public:
       m_atrPeriod = atrPeriod;
       m_handleH1  = iATR(m_symbol,m_tfH1,m_atrPeriod);
       m_handleH4  = iATR(m_symbol,m_tfH4,m_atrPeriod);
-      if(m_handleH1==INVALID_HANDLE || m_handleH4==INVALID_HANDLE)
+      m_handleD1  = iATR(m_symbol,m_tfD1,m_atrPeriod);
+      if(m_handleH1==INVALID_HANDLE || m_handleH4==INVALID_HANDLE || m_handleD1==INVALID_HANDLE)
          return false;
       if(!CalculatePercentiles())
          return false;
@@ -76,6 +80,11 @@ public:
          IndicatorRelease(m_handleH4);
          m_handleH4 = INVALID_HANDLE;
       }
+      if(m_handleD1!=INVALID_HANDLE)
+      {
+         IndicatorRelease(m_handleD1);
+         m_handleD1 = INVALID_HANDLE;
+      }
    }
 
    bool Update(const bool force=false)
@@ -92,11 +101,17 @@ public:
       ArrayResize(atrH4Buffer,1);
       if(CopyBuffer(m_handleH4,0,0,1,atrH4Buffer)!=1)
          return false;
+      double atrD1Buffer[];
+      ArrayResize(atrD1Buffer,1);
+      if(CopyBuffer(m_handleD1,0,0,1,atrD1Buffer)!=1)
+         return false;
 
       double atrH1 = atrH1Buffer[0];
       double atrH4 = atrH4Buffer[0];
+      double atrD1 = atrD1Buffer[0];
       m_lastAtrH1 = atrH1;
       m_lastAtrH4 = atrH4;
+      m_lastAtrD1 = atrD1;
       m_lastUpdateBarTime = barTime;
 
       if(atrH1 <= m_lowThreshold)
@@ -112,6 +127,7 @@ public:
 
    double AtrH1() { return m_lastAtrH1; }
    double AtrH4() { return m_lastAtrH4; }
+   double AtrD1() { return m_lastAtrD1; }
    double LowThreshold() { return m_lowThreshold; }
    double HighThreshold() { return m_highThreshold; }
 };
