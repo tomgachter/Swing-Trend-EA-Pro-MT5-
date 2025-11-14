@@ -128,6 +128,11 @@ private:
    double m_neutralBiasRiskScale;
    bool   m_allowLongs;
    bool   m_allowShorts;
+   double m_qualityBoostLowRegime;
+   double m_qualityBoostHighRegime;
+   double m_lowRegimeRiskScale;
+   double m_highRegimeRiskScale;
+   bool   m_requireStrongFallback;
 
    double BaseQualityFor(const SessionWindow session,const int direction,const bool fallbackMode) const
    {
@@ -388,7 +393,10 @@ public:
                   m_minQualityEdgeLong(0.80), m_minQualityEdgeShort(0.80),
                   m_allowAggressiveEntries(true), m_aggressiveDiscount(0.05), m_aggressiveFloor(0.60),
                   m_allowNeutralBiasEdge(true), m_neutralBiasRiskScale(0.5),
-                  m_allowLongs(true), m_allowShorts(true)
+                  m_allowLongs(true), m_allowShorts(true),
+                  m_qualityBoostLowRegime(0.05), m_qualityBoostHighRegime(0.02),
+                  m_lowRegimeRiskScale(0.75), m_highRegimeRiskScale(1.0),
+                  m_requireStrongFallback(true)
    {
    }
 
@@ -444,6 +452,22 @@ public:
       m_neutralBiasRiskScale = MathMax(0.0,MathMin(1.0,neutralRiskScale));
    }
 
+   void ConfigureRegimeAdjustments(const double lowQualityBoost,const double highQualityBoost,
+                                   const double lowRiskScale,const double highRiskScale)
+   {
+      m_qualityBoostLowRegime = MathMax(0.0,MathMin(0.20,lowQualityBoost));
+      m_qualityBoostHighRegime = MathMax(0.0,MathMin(0.15,highQualityBoost));
+      double lowScale = (lowRiskScale<=0.0 ? 0.0 : lowRiskScale);
+      double highScale = (highRiskScale<=0.0 ? 0.0 : highRiskScale);
+      m_lowRegimeRiskScale = MathMax(0.2,MathMin(1.0,lowScale));
+      m_highRegimeRiskScale = MathMax(0.2,MathMin(1.2,highScale));
+   }
+
+   void SetFallbackPolicy(const bool requireStrongSetups)
+   {
+      m_requireStrongFallback = requireStrongSetups;
+   }
+
    bool Evaluate(const TrendBias &bias,RegimeFilter &regime,const SessionWindow session,MqlRates &bars[],const int count,
                  const bool relaxedMomentum,const bool fallbackMode,const bool verbose,const bool allowAggressiveBoost,
                  EntrySignal &signal)
@@ -490,6 +514,18 @@ public:
 
       bool allowModerate = fallbackMode;
       bool allowNeutral = (m_allowNeutralBiasEdge && (session==SESSION_EDGE || fallbackMode));
+
+      double regimeQualityBoost = 0.0;
+      if(signal.regime==REGIME_LOW)
+         regimeQualityBoost = m_qualityBoostLowRegime;
+      else if(signal.regime==REGIME_HIGH)
+         regimeQualityBoost = m_qualityBoostHighRegime;
+
+      if(regimeQualityBoost>0.0)
+      {
+         minQualityLong = MathMin(0.99,minQualityLong + regimeQualityBoost);
+         minQualityShort = MathMin(0.99,minQualityShort + regimeQualityBoost);
+      }
 
       int evalDirection = bias.direction;
       BiasStrength activeStrength = bias.strength;
@@ -564,6 +600,10 @@ public:
          {
             candidate.biasStrength = BIAS_NEUTRAL;
             candidate.riskScale = (m_neutralBiasRiskScale>0.0 ? m_neutralBiasRiskScale : 0.0);
+            if(candidate.regime==REGIME_LOW)
+               candidate.riskScale *= m_lowRegimeRiskScale;
+            else if(candidate.regime==REGIME_HIGH)
+               candidate.riskScale *= m_highRegimeRiskScale;
             signal = candidate;
             produced = candidate.riskScale>0.0;
             if(produced && verbose)
@@ -598,6 +638,10 @@ public:
          {
             signal.biasStrength = activeStrength;
             signal.riskScale = 1.0;
+            if(signal.regime==REGIME_LOW)
+               signal.riskScale *= m_lowRegimeRiskScale;
+            else if(signal.regime==REGIME_HIGH)
+               signal.riskScale *= m_highRegimeRiskScale;
             if(aggressiveApplied && signal.family!=ENTRY_FAMILY_PULLBACK && signal.quality<baseQuality)
             {
                if(verbose)
@@ -615,6 +659,13 @@ public:
 
       if(!produced)
          return false;
+
+      if(fallbackMode && m_requireStrongFallback && !signal.strongSetup)
+      {
+         if(verbose)
+            Print("ENTRY TRACE: fallback mode requires strong setup -> rejecting");
+         return false;
+      }
 
       signal.valid = true;
       return true;

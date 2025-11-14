@@ -6,6 +6,26 @@
 #include "BrokerUtils.mqh"
 #include "Sizer.mqh"
 
+enum StopSourceTag
+{
+   STOP_SOURCE_INITIAL = 0,
+   STOP_SOURCE_ADAPTIVE,
+   STOP_SOURCE_BREAK_EVEN,
+   STOP_SOURCE_TRAIL,
+   STOP_SOURCE_TIME
+};
+
+enum ExitReasonTag
+{
+   EXIT_REASON_UNKNOWN = 0,
+   EXIT_REASON_INITIAL_SL,
+   EXIT_REASON_ADAPTIVE_SL,
+   EXIT_REASON_BREAK_EVEN,
+   EXIT_REASON_TRAIL,
+   EXIT_REASON_TIME,
+   EXIT_REASON_HARD_TP
+};
+
 struct TradeMetadata
 {
    ulong         ticket;
@@ -29,6 +49,13 @@ struct TradeMetadata
    BiasStrength  biasStrength;
    bool          adaptiveApplied;
    double        entryAtr;
+   double        maxFavorableR;
+   double        maxAdverseR;
+   double        lastKnownSL;
+   double        lastKnownTP;
+   int           lastBarsInTrade;
+   bool          fallbackTrade;
+   StopSourceTag lastStopSource;
 };
 
 class ExitEngine
@@ -52,6 +79,12 @@ private:
    double        m_adaptiveMinProfitR;
    ENUM_TIMEFRAMES m_entryTimeframe;
    bool          m_verbose;
+   bool          m_enableTelemetry;
+   string        m_logFolder;
+   string        m_entryFileName;
+   string        m_summaryFileName;
+   bool          m_entryHeaderWritten;
+   bool          m_summaryHeaderWritten;
 
    void RemoveAt(const int index)
    {
@@ -62,13 +95,54 @@ private:
       m_count = MathMax(0,m_count-1);
    }
 
+   void EnsureTelemetryFolder()
+   {
+      if(!m_enableTelemetry)
+         return;
+      string folder = (m_logFolder=="" ? "XAU_Swing_TrendEA_Pro" : m_logFolder);
+      FolderCreate(folder,FILE_COMMON);
+      m_logFolder = folder;
+   }
+
+   string ComposePath(const string fileName) const
+   {
+      if(m_logFolder=="")
+         return fileName;
+      return m_logFolder + "/" + fileName;
+   }
+
    void LogRegistration(const TradeMetadata &meta,const double volume)
    {
-      FolderCreate("XAU_Swing_TrendEA_Pro",FILE_COMMON);
-      int handle = FileOpen("XAU_Swing_TrendEA_Pro/trade_log.csv",FILE_WRITE|FILE_READ|FILE_CSV|FILE_COMMON,';');
+      if(!m_enableTelemetry)
+         return;
+      EnsureTelemetryFolder();
+      string fileName = (m_entryFileName=="" ? "trade_log.csv" : m_entryFileName);
+      int handle = FileOpen(ComposePath(fileName),FILE_WRITE|FILE_READ|FILE_CSV|FILE_COMMON,';');
       if(handle!=INVALID_HANDLE)
       {
          FileSeek(handle,0,SEEK_END);
+         long pos = FileTell(handle);
+         if(pos==0 && !m_entryHeaderWritten)
+         {
+            FileWrite(handle,
+                      "entry_time",
+                      "ticket",
+                      "volume",
+                      "direction",
+                      "family",
+                      "regime",
+                      "session",
+                      "risk_points",
+                      "initial_stop",
+                      "final_tp",
+                      "quality",
+                      "bias_strength",
+                      "risk_percent",
+                      "fallback_mode");
+            m_entryHeaderWritten = true;
+         }
+         else if(pos>0)
+            m_entryHeaderWritten = true;
          FileWrite(handle,
                    TimeToString(TimeCurrent(),TIME_DATE|TIME_SECONDS),
                    meta.ticket,
@@ -82,9 +156,78 @@ private:
                    meta.finalTpPrice,
                    meta.quality,
                    meta.biasStrength,
-                   meta.riskPercent);
+                   meta.riskPercent,
+                   meta.fallbackTrade?"true":"false");
          FileClose(handle);
       }
+   }
+
+   void LogSummary(const TradeMetadata &meta,const datetime exitTime,const double exitPrice,const double profit,
+                   const double finalR,const double commission,const double swap,const string &exitLabel)
+   {
+      if(!m_enableTelemetry)
+         return;
+      EnsureTelemetryFolder();
+      string fileName = (m_summaryFileName=="" ? "trade_telemetry.csv" : m_summaryFileName);
+      int handle = FileOpen(ComposePath(fileName),FILE_WRITE|FILE_READ|FILE_CSV|FILE_COMMON,';');
+      if(handle==INVALID_HANDLE)
+         return;
+      FileSeek(handle,0,SEEK_END);
+      long pos = FileTell(handle);
+      if(pos==0 && !m_summaryHeaderWritten)
+      {
+         FileWrite(handle,
+                   "entry_time",
+                   "exit_time",
+                   "ticket",
+                   "direction",
+                   "setup_type",
+                   "risk_percent",
+                   "r_exit",
+                   "mfe_r",
+                   "mae_r",
+                   "bars_in_trade",
+                   "exit_type",
+                   "session",
+                   "regime",
+                   "quality",
+                   "bias_strength",
+                   "profit",
+                   "commission",
+                   "swap",
+                   "fallback_mode",
+                   "entry_price",
+                   "exit_price");
+         m_summaryHeaderWritten = true;
+      }
+      else if(pos>0)
+         m_summaryHeaderWritten = true;
+      string typeLabel = (meta.family==ENTRY_FAMILY_PULLBACK ? "PULLBACK" : "BREAKOUT");
+      if(meta.fallbackTrade)
+         typeLabel += "_FALLBACK";
+      FileWrite(handle,
+                TimeToString(meta.openTime,TIME_DATE|TIME_SECONDS),
+                TimeToString(exitTime,TIME_DATE|TIME_SECONDS),
+                meta.ticket,
+                meta.direction,
+                typeLabel,
+                meta.riskPercent,
+                finalR,
+                meta.maxFavorableR,
+                meta.maxAdverseR,
+                meta.lastBarsInTrade,
+                exitLabel,
+                meta.session,
+                meta.regime,
+                meta.quality,
+                meta.biasStrength,
+                profit,
+                commission,
+                swap,
+                meta.fallbackTrade?"true":"false",
+                meta.entryPrice,
+                exitPrice);
+      FileClose(handle);
    }
 
    double PointsToPrice(const double points,const double pointSize) const
@@ -97,7 +240,10 @@ public:
                  m_trailStart_R(1.5), m_trailDistance_R(1.0), m_useHardFinalTP(true), m_useTimeStop(true),
                  m_maxBarsInTrade(30), m_timeStopProtectR(0.5),
                  m_useAdaptiveSL(true), m_adaptiveAfterBars(10), m_adaptiveMultiplier(1.2), m_adaptiveMinProfitR(0.5),
-                 m_entryTimeframe(PERIOD_H1), m_verbose(false)
+                 m_entryTimeframe(PERIOD_H1), m_verbose(false),
+                 m_enableTelemetry(false), m_logFolder("XAU_Swing_TrendEA_Pro"),
+                 m_entryFileName("trade_log.csv"), m_summaryFileName("trade_telemetry.csv"),
+                 m_entryHeaderWritten(false), m_summaryHeaderWritten(false)
    {
    }
 
@@ -138,6 +284,26 @@ public:
       m_adaptiveMinProfitR = minProfitR;
    }
 
+   void ConfigureTelemetry(const bool enable,const string folder="",const string prefix="")
+   {
+      m_enableTelemetry = enable;
+      if(folder!="")
+         m_logFolder = folder;
+      string base = (prefix=="" ? "trade" : prefix);
+      if(base=="trade")
+      {
+         m_entryFileName = "trade_log.csv";
+         m_summaryFileName = "trade_telemetry.csv";
+      }
+      else
+      {
+         m_entryFileName = base + "_entries.csv";
+         m_summaryFileName = base + "_telemetry.csv";
+      }
+      m_entryHeaderWritten = false;
+      m_summaryHeaderWritten = false;
+   }
+
    void Register(const ulong ticket,const EntrySignal &signal,const double rPoints,const double volume,const double riskPercent)
    {
       if(m_count>=ArraySize(m_positions))
@@ -165,6 +331,13 @@ public:
       meta.finalTpPrice = (m_useHardFinalTP ? signal.entryPrice + signal.direction*m_finalTP_R*rPoints*_Point : 0.0);
       meta.adaptiveApplied = !m_useAdaptiveSL;
       meta.entryAtr = MathAbs(signal.atr);
+      meta.maxFavorableR = 0.0;
+      meta.maxAdverseR = 0.0;
+      meta.lastKnownSL = signal.stopLoss;
+      meta.lastKnownTP = meta.finalTpPrice;
+      meta.lastBarsInTrade = 0;
+      meta.fallbackTrade = signal.fallbackRelaxed;
+      meta.lastStopSource = STOP_SOURCE_INITIAL;
 
       m_positions[m_count++] = meta;
 
@@ -175,7 +348,43 @@ public:
       LogRegistration(meta,volume);
    }
 
-   double OnPositionClosed(const ulong ticket)
+   ExitReasonTag DeriveExitReason(const TradeMetadata &meta,const double exitPrice,const double point) const
+   {
+      double tolerance = MathMax(point*2.0,point*0.5);
+      if(meta.useHardFinalTp && meta.finalTpPrice>0.0 && MathAbs(exitPrice-meta.finalTpPrice)<=tolerance)
+         return EXIT_REASON_HARD_TP;
+      if(meta.lastKnownSL>0.0 && MathAbs(exitPrice-meta.lastKnownSL)<=tolerance)
+      {
+         switch(meta.lastStopSource)
+         {
+            case STOP_SOURCE_BREAK_EVEN: return EXIT_REASON_BREAK_EVEN;
+            case STOP_SOURCE_TRAIL:      return EXIT_REASON_TRAIL;
+            case STOP_SOURCE_TIME:       return EXIT_REASON_TIME;
+            case STOP_SOURCE_ADAPTIVE:   return EXIT_REASON_ADAPTIVE_SL;
+            default:                     return EXIT_REASON_INITIAL_SL;
+         }
+      }
+      if(MathAbs(exitPrice-meta.initialStop)<=tolerance)
+         return EXIT_REASON_INITIAL_SL;
+      return EXIT_REASON_UNKNOWN;
+   }
+
+   string ExitReasonToString(const ExitReasonTag reason) const
+   {
+      switch(reason)
+      {
+         case EXIT_REASON_INITIAL_SL:   return "STOP_LOSS";
+         case EXIT_REASON_ADAPTIVE_SL:  return "ADAPTIVE_SL";
+         case EXIT_REASON_BREAK_EVEN:   return "BREAK_EVEN";
+         case EXIT_REASON_TRAIL:        return "TRAIL";
+         case EXIT_REASON_TIME:         return "TIME_STOP";
+         case EXIT_REASON_HARD_TP:      return "HARD_TP";
+         default:                       return "UNKNOWN";
+      }
+   }
+
+   double OnPositionClosed(const ulong ticket,const double exitPrice,const datetime exitTime,const double profit,
+                           const double commission,const double swap)
    {
       double risk = 0.0;
       for(int i=0;i<m_count;i++)
@@ -183,6 +392,15 @@ public:
          if(m_positions[i].ticket==ticket)
          {
             risk = m_positions[i].riskPercent;
+            double point = SymbolInfoDouble(_Symbol,SYMBOL_POINT);
+            if(point<=0.0)
+               point = _Point;
+            double finalR = 0.0;
+            if(point>0.0 && m_positions[i].rPoints>0.0)
+               finalR = (exitPrice - m_positions[i].entryPrice)*m_positions[i].direction/(m_positions[i].rPoints*point);
+            ExitReasonTag reason = DeriveExitReason(m_positions[i],exitPrice,point);
+            string reasonLabel = ExitReasonToString(reason);
+            LogSummary(m_positions[i],exitTime,exitPrice,profit,finalR,commission,swap,reasonLabel);
             RemoveAt(i);
             break;
          }
@@ -222,11 +440,18 @@ public:
          double currentR = (currentPrice - m_positions[i].entryPrice)*m_positions[i].direction/(rToPrice);
 
          double currentSL = PositionGetDouble(POSITION_SL);
+         double currentTP = PositionGetDouble(POSITION_TP);
+
+         m_positions[i].maxFavorableR = MathMax(m_positions[i].maxFavorableR,currentR);
+         m_positions[i].maxAdverseR = MathMin(m_positions[i].maxAdverseR,currentR);
+         m_positions[i].lastKnownSL = currentSL;
+         m_positions[i].lastKnownTP = currentTP;
 
          double elapsedSeconds = (double)(TimeCurrent() - m_positions[i].openTime);
          int barsInTrade = (int)MathFloor(elapsedSeconds/periodSeconds);
          if(barsInTrade<0)
             barsInTrade = 0;
+         m_positions[i].lastBarsInTrade = barsInTrade;
 
          if(m_useAdaptiveSL && !m_positions[i].adaptiveApplied && m_adaptiveAfterBars>0 && barsInTrade >= m_adaptiveAfterBars)
          {
@@ -255,6 +480,8 @@ public:
                      if(broker.ModifySL(m_positions[i].ticket,adaptivePrice))
                      {
                         m_positions[i].adaptiveApplied = true;
+                        m_positions[i].lastStopSource = STOP_SOURCE_ADAPTIVE;
+                        m_positions[i].lastKnownSL = adaptivePrice;
                         currentSL = adaptivePrice;
                         if(m_verbose)
                            PrintFormat("EXIT DEBUG: adaptive SL tightened ticket=%I64u newSL=%.2f",m_positions[i].ticket,adaptivePrice);
@@ -277,6 +504,8 @@ public:
                if(broker.ModifySL(m_positions[i].ticket,breakEvenPrice))
                {
                   m_positions[i].breakEvenDone = true;
+                  m_positions[i].lastStopSource = STOP_SOURCE_BREAK_EVEN;
+                  m_positions[i].lastKnownSL = breakEvenPrice;
                   if(m_verbose)
                      PrintFormat("EXIT DEBUG: break-even set ticket=%I64u sl=%.2f",m_positions[i].ticket,breakEvenPrice);
                }
@@ -299,6 +528,8 @@ public:
                      if(broker.ModifySL(m_positions[i].ticket,breakEvenPrice))
                      {
                         m_positions[i].breakEvenDone = true;
+                        m_positions[i].lastStopSource = STOP_SOURCE_BREAK_EVEN;
+                        m_positions[i].lastKnownSL = breakEvenPrice;
                      }
                   }
                   if(m_verbose)
@@ -323,8 +554,13 @@ public:
                   trailPrice = MathMin(trailPrice,currentPrice - minStep);
                else
                   trailPrice = MathMax(trailPrice,currentPrice + minStep);
-               if(broker.ModifySL(m_positions[i].ticket,trailPrice) && m_verbose)
-                  PrintFormat("EXIT DEBUG: trailing stop adjusted ticket=%I64u newSL=%.2f",m_positions[i].ticket,trailPrice);
+               if(broker.ModifySL(m_positions[i].ticket,trailPrice))
+               {
+                  m_positions[i].lastStopSource = STOP_SOURCE_TRAIL;
+                  m_positions[i].lastKnownSL = trailPrice;
+                  if(m_verbose)
+                     PrintFormat("EXIT DEBUG: trailing stop adjusted ticket=%I64u newSL=%.2f",m_positions[i].ticket,trailPrice);
+               }
             }
          }
 
@@ -335,6 +571,8 @@ public:
             {
                if(currentR <= 0.0)
                {
+                  m_positions[i].lastStopSource = STOP_SOURCE_TIME;
+                  m_positions[i].lastKnownSL = currentPrice;
                   if(broker.ClosePosition(m_positions[i].ticket) && m_verbose)
                      PrintFormat("EXIT DEBUG: time stop closed ticket=%I64u at R=%.2f",m_positions[i].ticket,currentR);
                   continue;
@@ -352,6 +590,8 @@ public:
                      if(broker.ModifySL(m_positions[i].ticket,protective))
                      {
                         m_positions[i].timeStopTightened = true;
+                        m_positions[i].lastStopSource = STOP_SOURCE_TIME;
+                        m_positions[i].lastKnownSL = protective;
                         if(m_verbose)
                            PrintFormat("EXIT DEBUG: time stop tightened ticket=%I64u newSL=%.2f",m_positions[i].ticket,protective);
                      }

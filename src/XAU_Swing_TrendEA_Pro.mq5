@@ -22,7 +22,7 @@
 
 // --- Risk / session framework -------------------------------------------------
 input RiskMode         InpRiskMode = RISK_PERCENT_PER_TRADE;  // Risk allocation model
-input double           RiskPerTrade = 0.75;                   // Percent or lots depending on mode
+input double           RiskPerTrade = 0.60;                   // Percent or lots depending on mode
 input double           MaxDailyRiskPercent = 5.0;             // Daily loss+open risk cap in %
 input double           MaxEquityDDPercentForCloseAll = 12.0;  // Hard equity drawdown kill switch
 input ulong            MagicNumber = 20241026;                // Trade identifier
@@ -38,12 +38,14 @@ input int              SessionStartMinute   = 0;
 input int              SessionEndHour       = 14;
 input int              SessionEndMinute     = 45;
 input bool             AllowSessionOverrideInDebug = false;
+input bool             EnableTradeTelemetry   = true;
+input string           TelemetryFilePrefix    = "xau_balanced_v2";
 
 // Balanced XAU H1 preset reference (see README for symbol-specific tweaks):
-// RiskPerTrade=0.75, MaxDailyRiskPercent=5, MaxEquityDDPercentForCloseAll=12,
-// BiasSlopeThH1/H4/D1=0.020/0.018/0.015, Core/Edge score long/short=0.70/0.80,
-// PartialTP1_Fraction=0.50, BreakEven_R=1.0, PartialTP1_R=1.2, HardTP_R=2.5,
-// TrailStart_R=1.5, TrailDistance_R=1.0, MaxBarsInTrade=30, MaxNewTradesPerDay=5,
+// RiskPerTrade=0.60, MaxDailyRiskPercent=5, MaxEquityDDPercentForCloseAll=12,
+// BiasSlopeThH1/H4/D1=0.020/0.018/0.015, Core/Edge score long/short=0.76/0.85,
+// PartialTP1_Fraction=0.40, BreakEven_R=0.9, PartialTP1_R=1.1, HardTP_R=2.7,
+// TrailStart_R=1.8, TrailDistance_R=0.9, MaxBarsInTrade=36, MaxNewTradesPerDay=3,
 // MaxLosingTradesPerDay=3, MaxLosingTradesInARow=3, RiskScaleAfterLosingStreak=0.5.
 
 // --- Bias tuning -------------------------------------------------------------
@@ -52,20 +54,27 @@ input double           BiasSlopeThH1         = 0.020;
 input double           BiasSlopeThH4         = 0.018;
 input double           BiasSlopeThD1         = 0.015;
 input bool             AllowNeutralBiasOnEdge= true;   // Edge-Session: starkes Setup darf trotz neutralem Bias
-input double           NeutralBiasRiskScale  = 0.50;   // Risiko-Reduktion bei neutralem Bias Override
+input double           NeutralBiasRiskScale  = 0.40;   // Risiko-Reduktion bei neutralem Bias Override
+input double           BiasScoreThresholdCore = 0.060; // Mindest-Slope-Summe (R) Kernsession
+input double           BiasScoreThresholdEdge = 0.085; // Mindest-Slope-Summe Edge/Fallback
+input double           BiasScoreRegimeLowBoost = 0.015;// Zusatzanforderung bei Low-Volatility
+input double           BiasScoreRegimeHighBoost = 0.005;// Zusatzanforderung bei High-Volatility
+input double           BiasSlopeConfirmH1    = 0.018;  // Mindest-Slope H1 (abs)
+input double           BiasSlopeConfirmH4    = 0.014;  // Mindest-Slope H4 (abs)
+input double           BiasSlopeConfirmD1    = 0.010;  // Mindest-Slope D1 (abs)
 
 // --- Entry sensitivity & scoring --------------------------------------------
 input bool             AllowLongs            = true;   // Long-Setups zulassen
 input bool             AllowShorts           = true;   // Short-Setups zulassen
-input double           PullbackBodyATRMin    = 0.35;   // Mindestkörpergröße relativ ATR
-input double           BreakoutImpulseATRMin = 0.35;   // Mindestimpuls relativ ATR
-input int              BreakoutRangeBars     = 5;      // Range-Breite für Breakout-Box
-input double           CoreScoreThresholdLong  = 0.70; // Score-Schwelle Kernsession Long
-input double           CoreScoreThresholdShort = 0.70; // Score-Schwelle Kernsession Short
-input double           EdgeScoreThresholdLong  = 0.80; // Score-Schwelle Edge/Fallback Long
-input double           EdgeScoreThresholdShort = 0.80; // Score-Schwelle Edge/Fallback Short
+input double           PullbackBodyATRMin    = 0.45;   // Mindestkörpergröße relativ ATR
+input double           BreakoutImpulseATRMin = 0.42;   // Mindestimpuls relativ ATR
+input int              BreakoutRangeBars     = 6;      // Range-Breite für Breakout-Box
+input double           CoreScoreThresholdLong  = 0.76; // Score-Schwelle Kernsession Long
+input double           CoreScoreThresholdShort = 0.76; // Score-Schwelle Kernsession Short
+input double           EdgeScoreThresholdLong  = 0.85; // Score-Schwelle Edge/Fallback Long
+input double           EdgeScoreThresholdShort = 0.85; // Score-Schwelle Edge/Fallback Short
 input bool             AllowAggressiveEntries= true;   // Aggressiver handeln bei positivem Lauf
-input int              MaxNewTradesPerDay    = 5;      // Maximal neue Einstiege pro Tag
+input int              MaxNewTradesPerDay    = 3;      // Maximal neue Einstiege pro Tag
 input ENUM_TIMEFRAMES  EntryTF               = PERIOD_H1;
 
 // --- Fallback & bias relaxation ---------------------------------------------
@@ -74,6 +83,11 @@ input int              FallbackMinHour       = 12;     // earliest hour for fall
 input int              FallbackMaxPer7D      = 2;      // fire when < this in last 7D
 input bool             UseDynamicRisk        = true;
 input bool             EnableFallbackEntry   = true;
+input bool             RequireStrongFallbackSetups = true; // Fallback nur bei A-Setups
+input double           RegimeLowQualityBoost = 0.06;  // Zusätzliche Score-Anforderung Low Regime
+input double           RegimeHighQualityBoost= 0.03;  // Zusätzliche Score-Anforderung High Regime
+input double           RegimeLowRiskScale    = 0.60;  // Risiko-Skalierung Low Regime
+input double           RegimeHighRiskScale   = 1.05;  // Risiko-Skalierung High Regime
 
 // --- R-based trade management ------------------------------------------------
 input double           InitialSL_ATRMultiplier = 1.2;  // initialer SL = ATR * multiplier
@@ -81,21 +95,25 @@ input bool             UseAdaptiveSL          = true;  // Adaptiven SL nach X Ba
 input int              AdaptiveSL_AfterBars   = 10;    // Bars nach Entry bis enger SL aktiv wird
 input double           AdaptiveSL_ATRMultiplier = 1.2; // ATR-Multiplikator für adaptiven SL
 input double           AdaptiveSL_MinProfitR  = 0.5;   // Mindest-R-Gewinn, um engeren SL zu vermeiden
-input double           PartialTP1_Fraction   = 0.50;   // Anteil der Position beim Teilgewinn
-input double           BreakEven_R           = 1.0;    // ab 1R SL auf Break-even
-input double           PartialTP1_R          = 1.2;    // Teilgewinn-Level in R
-input double           HardTP_R              = 2.5;    // finales Ziel in R (wenn hartes TP aktiv)
-input double           TrailStart_R          = 1.5;    // ab dieser R-Multiple trailen
-input double           TrailDistance_R       = 1.0;    // Abstand in R für Trailing-Stop
+input double           PartialTP1_Fraction   = 0.40;   // Anteil der Position beim Teilgewinn
+input double           BreakEven_R           = 0.9;    // ab 0.9R SL auf Break-even
+input double           PartialTP1_R          = 1.1;    // Teilgewinn-Level in R
+input double           HardTP_R              = 2.7;    // finales Ziel in R (wenn hartes TP aktiv)
+input double           TrailStart_R          = 1.8;    // ab dieser R-Multiple trailen
+input double           TrailDistance_R       = 0.9;    // Abstand in R für Trailing-Stop
 input bool             UseHardFinalTP        = true;   // TP beim Entry setzen
 input bool             UseTimeStop           = true;   // Max-Bars-Stop aktivieren
-input int              MaxBarsInTrade        = 30;     // Zeit-Stop (Bars des EntryTF)
+input int              MaxBarsInTrade        = 36;     // Zeit-Stop (Bars des EntryTF)
 input double           TimeStopProtectR      = 0.5;    // SL auf xR anziehen bei Time-Stop (auch <0 erlaubt)
 
 // --- Risk discipline extensions ---------------------------------------------
 input int              MaxLosingTradesPerDay = 3;
 input int              MaxLosingTradesInARow = 3;
 input double           RiskScaleAfterLosingStreak = 0.50; // <0 => Handel pausiert
+
+// --- Session refinements -----------------------------------------------------
+input int              LateEntryCutoffHour   = 14;     // Keine neuen Trades nach diesem Zeitpunkt
+input int              LateEntryCutoffMinute = 0;
 
 input bool             DebugMode = true;    // ausführliches Logging + Debug-Fallbacks
 input bool             ForceVerboseDecisionLog = false; // erzwingt detaillierte Entscheidungs-Logs ohne Debug-Overrides
@@ -158,11 +176,15 @@ int OnInit()
                                AllowAggressiveEntries,0.05,0.60);
    gEntry.SetDirectionalPermissions(AllowLongs,AllowShorts);
    gEntry.ConfigureNeutralPolicy(AllowNeutralBiasOnEdge,NeutralBiasRiskScale);
+   gEntry.ConfigureRegimeAdjustments(RegimeLowQualityBoost,RegimeHighQualityBoost,
+                                     RegimeLowRiskScale,RegimeHighRiskScale);
+   gEntry.SetFallbackPolicy(RequireStrongFallbackSetups);
    gExit.ConfigureRManagement(PartialTP1_Fraction,BreakEven_R,PartialTP1_R,HardTP_R,TrailStart_R,TrailDistance_R,
                               UseHardFinalTP,UseTimeStop,MaxBarsInTrade,TimeStopProtectR);
    gExit.ConfigureAdaptiveSL(UseAdaptiveSL,AdaptiveSL_AfterBars,AdaptiveSL_ATRMultiplier,AdaptiveSL_MinProfitR);
    gExit.SetEntryTimeframe(EntryTF);
    gExit.SetVerbose(gVerboseDecisionLog);
+   gExit.ConfigureTelemetry(EnableTradeTelemetry,"XAU_Swing_TrendEA_Pro",TelemetryFilePrefix);
    string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MagicNumber);
    gRisk.Configure(InpRiskMode,RiskPerTrade,MaxDailyRiskPercent,MaxEquityDDPercentForCloseAll,
                    PropFirmDayStartHour,persistKey,UseStaticOverallDD,(double)SlippageBudgetPoints);
@@ -293,6 +315,7 @@ void EvaluateNewBar()
 
    TrendBias bias;
    gBias.ComputeTrendBias(bias,useFallback,useFallback);
+   RegimeBucket regimeBucket = gRegime.CurrentBucket();
    if(gVerboseDecisionLog)
    {
       PrintFormat("BIAS TRACE: dir=%d strength=%d score=%.3f votesStrong L%d/S%d votesNear L%d/S%d slopes=%.3f/%.3f/%.3f th=%.3f/%.3f/%.3f",
@@ -311,6 +334,81 @@ void EvaluateNewBar()
          PrintFormat("ENTRY DEBUG: Session filter blocked entry at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
       else if(gVerboseDecisionLog)
          PrintFormat("ENTRY TRACE: Session filter blocked entry at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
+      return;
+   }
+
+   if(LateEntryCutoffHour>=0)
+   {
+      int cutoff = MathMax(0,MathMin(23*60+59,LateEntryCutoffHour*60 + LateEntryCutoffMinute));
+      MqlDateTime dt;
+      TimeToStruct(signalTime,dt);
+      int minutesNow = dt.hour*60 + dt.min;
+      if(minutesNow>cutoff)
+      {
+         if(gVerboseDecisionLog)
+         {
+            PrintFormat("ENTRY TRACE: late cutoff %02d:%02d exceeded at %02d:%02d",cutoff/60,cutoff%60,dt.hour,dt.min);
+         }
+         return;
+      }
+   }
+
+   double scoreThreshold = (window==SESSION_CORE ? BiasScoreThresholdCore : BiasScoreThresholdEdge);
+   if(regimeBucket==REGIME_LOW)
+      scoreThreshold += BiasScoreRegimeLowBoost;
+   else if(regimeBucket==REGIME_HIGH)
+      scoreThreshold += BiasScoreRegimeHighBoost;
+   if(useFallback)
+      scoreThreshold *= 0.90;
+
+   double biasScoreAbs = MathAbs(bias.score);
+   if(biasScoreAbs < scoreThreshold)
+   {
+      if(gVerboseDecisionLog)
+      {
+         PrintFormat("ENTRY TRACE: bias score %.4f below threshold %.4f (regime=%d window=%d)",biasScoreAbs,scoreThreshold,(int)regimeBucket,(int)window);
+      }
+      return;
+   }
+
+   int slopeVotes = 0;
+   double slopeAbsH1 = MathAbs(bias.slopeH1);
+   double slopeAbsH4 = MathAbs(bias.slopeH4);
+   double slopeAbsD1 = MathAbs(bias.slopeD1);
+   if(slopeAbsH1>=BiasSlopeConfirmH1) slopeVotes++;
+   if(slopeAbsH4>=BiasSlopeConfirmH4) slopeVotes++;
+   if(slopeAbsD1>=BiasSlopeConfirmD1) slopeVotes++;
+
+   bool directionResolved = (bias.direction!=0);
+   if(directionResolved && slopeVotes<2 && bias.strength!=BIAS_STRONG && !useFallback)
+   {
+      if(gVerboseDecisionLog)
+      {
+         PrintFormat("ENTRY TRACE: slope confirmations=%d below requirement for bias strength %d",slopeVotes,(int)bias.strength);
+      }
+      return;
+   }
+
+   if(directionResolved && !useFallback)
+   {
+      if(bias.direction>0 && bias.slopeD1 < BiasSlopeConfirmD1)
+      {
+         if(gVerboseDecisionLog)
+            Print("ENTRY TRACE: D1 slope insufficient for long bias");
+         return;
+      }
+      if(bias.direction<0 && (-bias.slopeD1) < BiasSlopeConfirmD1)
+      {
+         if(gVerboseDecisionLog)
+            Print("ENTRY TRACE: D1 slope insufficient for short bias");
+         return;
+      }
+   }
+
+   if(regimeBucket==REGIME_LOW && bias.strength==BIAS_NEUTRAL && !useFallback)
+   {
+      if(gVerboseDecisionLog)
+         Print("ENTRY TRACE: neutral bias blocked in low-vol regime");
       return;
    }
 
@@ -658,7 +756,13 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
          bool positionStillOpen = PositionSelectByTicket(positionId);
          double riskRemoved = 0.0;
          if(!positionStillOpen)
-            riskRemoved = gExit.OnPositionClosed(positionId);
+         {
+            double exitPrice = HistoryDealGetDouble(deal,DEAL_PRICE);
+            datetime exitTime = (datetime)HistoryDealGetInteger(deal,DEAL_TIME);
+            double commission = HistoryDealGetDouble(deal,DEAL_COMMISSION);
+            double swap = HistoryDealGetDouble(deal,DEAL_SWAP);
+            riskRemoved = gExit.OnPositionClosed(positionId,exitPrice,exitTime,profit,commission,swap);
+         }
          if(!positionStillOpen)
          {
             gRisk.OnTradeClosed(profit,riskRemoved);
