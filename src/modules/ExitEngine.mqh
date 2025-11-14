@@ -152,7 +152,7 @@ private:
       if(handle!=INVALID_HANDLE)
       {
          FileSeek(handle,0,SEEK_END);
-         long pos = FileTell(handle);
+         ulong pos = FileTell(handle);
          if(pos==0)
             WriteConfigHeader(handle,m_entryConfigWritten);
          else
@@ -208,7 +208,7 @@ private:
       if(handle==INVALID_HANDLE)
          return;
       FileSeek(handle,0,SEEK_END);
-      long pos = FileTell(handle);
+      ulong pos = FileTell(handle);
       if(pos==0)
          WriteConfigHeader(handle,m_summaryConfigWritten);
       else
