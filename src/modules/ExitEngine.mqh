@@ -27,6 +27,8 @@ struct TradeMetadata
    bool          useHardFinalTp;
    double        quality;
    BiasStrength  biasStrength;
+   bool          adaptiveApplied;
+   double        entryAtr;
 };
 
 class ExitEngine
@@ -44,6 +46,10 @@ private:
    bool          m_useTimeStop;
    int           m_maxBarsInTrade;
    double        m_timeStopProtectR;
+   bool          m_useAdaptiveSL;
+   int           m_adaptiveAfterBars;
+   double        m_adaptiveMultiplier;
+   double        m_adaptiveMinProfitR;
    ENUM_TIMEFRAMES m_entryTimeframe;
    bool          m_verbose;
 
@@ -89,7 +95,9 @@ private:
 public:
    ExitEngine(): m_count(0), m_partialFraction(0.5), m_breakEvenR(1.0), m_partialTP_R(1.2), m_finalTP_R(2.5),
                  m_trailStart_R(1.5), m_trailDistance_R(1.0), m_useHardFinalTP(true), m_useTimeStop(true),
-                 m_maxBarsInTrade(30), m_timeStopProtectR(0.5), m_entryTimeframe(PERIOD_H1), m_verbose(false)
+                 m_maxBarsInTrade(30), m_timeStopProtectR(0.5),
+                 m_useAdaptiveSL(true), m_adaptiveAfterBars(10), m_adaptiveMultiplier(1.2), m_adaptiveMinProfitR(0.5),
+                 m_entryTimeframe(PERIOD_H1), m_verbose(false)
    {
    }
 
@@ -109,7 +117,7 @@ public:
       m_useHardFinalTP = useHardFinalTP;
       m_useTimeStop = useTimeStop;
       m_maxBarsInTrade = MathMax(1,maxBarsInTrade);
-      m_timeStopProtectR = MathMax(0.0,timeStopProtectR);
+      m_timeStopProtectR = timeStopProtectR;
    }
 
    void SetEntryTimeframe(const ENUM_TIMEFRAMES tf)
@@ -120,6 +128,14 @@ public:
    void SetVerbose(const bool verbose)
    {
       m_verbose = verbose;
+   }
+
+   void ConfigureAdaptiveSL(const bool useAdaptive,const int afterBars,const double atrMultiplier,const double minProfitR)
+   {
+      m_useAdaptiveSL = useAdaptive;
+      m_adaptiveAfterBars = MathMax(1,afterBars);
+      m_adaptiveMultiplier = MathMax(0.0,atrMultiplier);
+      m_adaptiveMinProfitR = minProfitR;
    }
 
    void Register(const ulong ticket,const EntrySignal &signal,const double rPoints,const double volume,const double riskPercent)
@@ -147,6 +163,8 @@ public:
       meta.quality = signal.quality;
       meta.biasStrength = signal.biasStrength;
       meta.finalTpPrice = (m_useHardFinalTP ? signal.entryPrice + signal.direction*m_finalTP_R*rPoints*_Point : 0.0);
+      meta.adaptiveApplied = !m_useAdaptiveSL;
+      meta.entryAtr = MathAbs(signal.atr);
 
       m_positions[m_count++] = meta;
 
@@ -204,6 +222,51 @@ public:
          double currentR = (currentPrice - m_positions[i].entryPrice)*m_positions[i].direction/(rToPrice);
 
          double currentSL = PositionGetDouble(POSITION_SL);
+
+         double elapsedSeconds = (double)(TimeCurrent() - m_positions[i].openTime);
+         int barsInTrade = (int)MathFloor(elapsedSeconds/periodSeconds);
+         if(barsInTrade<0)
+            barsInTrade = 0;
+
+         if(m_useAdaptiveSL && !m_positions[i].adaptiveApplied && m_adaptiveAfterBars>0 && barsInTrade >= m_adaptiveAfterBars)
+         {
+            if(currentR >= m_adaptiveMinProfitR)
+            {
+               m_positions[i].adaptiveApplied = true;
+            }
+            else
+            {
+               double atrBasis = (m_positions[i].entryAtr>0.0 ? m_positions[i].entryAtr : regime.AtrH1());
+               double adaptiveDist = atrBasis * m_adaptiveMultiplier;
+               if(adaptiveDist<=0.0)
+               {
+                  m_positions[i].adaptiveApplied = true;
+               }
+               else
+               {
+                  double adaptivePrice = m_positions[i].entryPrice - m_positions[i].direction*adaptiveDist;
+                  bool canImprove = (m_positions[i].direction>0 ? adaptivePrice > currentSL + minStep : adaptivePrice < currentSL - minStep);
+                  if(canImprove)
+                  {
+                     if(m_positions[i].direction>0)
+                        adaptivePrice = MathMin(adaptivePrice,currentPrice - minStep);
+                     else
+                        adaptivePrice = MathMax(adaptivePrice,currentPrice + minStep);
+                     if(broker.ModifySL(m_positions[i].ticket,adaptivePrice))
+                     {
+                        m_positions[i].adaptiveApplied = true;
+                        currentSL = adaptivePrice;
+                        if(m_verbose)
+                           PrintFormat("EXIT DEBUG: adaptive SL tightened ticket=%I64u newSL=%.2f",m_positions[i].ticket,adaptivePrice);
+                     }
+                  }
+                  else
+                  {
+                     m_positions[i].adaptiveApplied = true;
+                  }
+               }
+            }
+         }
 
          // Break-even management
          if(!m_positions[i].breakEvenDone && m_breakEvenR>0.0 && currentR >= m_breakEvenR)
@@ -268,8 +331,6 @@ public:
          // Time-based exit
          if(m_useTimeStop)
          {
-            double elapsedSeconds = (double)(TimeCurrent() - m_positions[i].openTime);
-            int barsInTrade = (int)MathFloor(elapsedSeconds/periodSeconds);
             if(barsInTrade >= m_maxBarsInTrade)
             {
                if(currentR <= 0.0)
@@ -278,7 +339,7 @@ public:
                      PrintFormat("EXIT DEBUG: time stop closed ticket=%I64u at R=%.2f",m_positions[i].ticket,currentR);
                   continue;
                }
-               if(!m_positions[i].timeStopTightened && m_timeStopProtectR>0.0)
+               if(!m_positions[i].timeStopTightened && m_timeStopProtectR!=0.0)
                {
                   double protective = m_positions[i].entryPrice + m_positions[i].direction*m_timeStopProtectR*rToPrice;
                   bool canImprove = (m_positions[i].direction>0 ? protective > currentSL + minStep : protective < currentSL - minStep);

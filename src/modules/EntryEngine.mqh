@@ -26,6 +26,11 @@ struct EntrySignal
    BiasStrength  biasStrength;
    bool          strongSetup;
    double        riskScale;
+   int           biasDirection;
+   double        biasScore;
+   double        biasSlopeH1;
+   double        biasSlopeH4;
+   double        biasSlopeD1;
 
    EntrySignal()
    {
@@ -42,6 +47,11 @@ struct EntrySignal
       biasStrength = BIAS_NEUTRAL;
       strongSetup = false;
       riskScale = 1.0;
+      biasDirection = 0;
+      biasScore = 0.0;
+      biasSlopeH1 = 0.0;
+      biasSlopeH4 = 0.0;
+      biasSlopeD1 = 0.0;
    }
 };
 
@@ -107,13 +117,32 @@ private:
    double m_pullbackBodyAtrMin;
    double m_breakoutImpulseAtrMin;
    int    m_breakoutRangeBars;
-   double m_minQualityCore;
-   double m_minQualityEdge;
+   double m_minQualityCoreLong;
+   double m_minQualityCoreShort;
+   double m_minQualityEdgeLong;
+   double m_minQualityEdgeShort;
    bool   m_allowAggressiveEntries;
    double m_aggressiveDiscount;
    double m_aggressiveFloor;
    bool   m_allowNeutralBiasEdge;
    double m_neutralBiasRiskScale;
+   bool   m_allowLongs;
+   bool   m_allowShorts;
+
+   double BaseQualityFor(const SessionWindow session,const int direction,const bool fallbackMode) const
+   {
+      bool useCore = (session==SESSION_CORE);
+      if(fallbackMode && session!=SESSION_CORE)
+         useCore = false;
+
+      if(direction>0)
+         return (useCore ? m_minQualityCoreLong : m_minQualityEdgeLong);
+      if(direction<0)
+         return (useCore ? m_minQualityCoreShort : m_minQualityEdgeShort);
+      double bothCore = MathMin(m_minQualityCoreLong,m_minQualityCoreShort);
+      double bothEdge = MathMin(m_minQualityEdgeLong,m_minQualityEdgeShort);
+      return (useCore ? bothCore : bothEdge);
+   }
 
    double ScoreFromProximity(const double distance,const double scale) const
    {
@@ -355,9 +384,11 @@ private:
 public:
    EntryEngine(): m_slAtrMult(1.2), m_randomize(false),
                   m_pullbackBodyAtrMin(0.35), m_breakoutImpulseAtrMin(0.35), m_breakoutRangeBars(5),
-                  m_minQualityCore(0.70), m_minQualityEdge(0.80),
+                  m_minQualityCoreLong(0.70), m_minQualityCoreShort(0.70),
+                  m_minQualityEdgeLong(0.80), m_minQualityEdgeShort(0.80),
                   m_allowAggressiveEntries(true), m_aggressiveDiscount(0.05), m_aggressiveFloor(0.60),
-                  m_allowNeutralBiasEdge(true), m_neutralBiasRiskScale(0.5)
+                  m_allowNeutralBiasEdge(true), m_neutralBiasRiskScale(0.5),
+                  m_allowLongs(true), m_allowShorts(true)
    {
    }
 
@@ -382,17 +413,29 @@ public:
          m_breakoutRangeBars = breakoutRangeBars;
    }
 
-   void SetQualityThresholds(const double minCore,const double minEdge,const bool allowAggressive,const double aggressiveDiscount,const double aggressiveFloor)
+   void SetQualityThresholds(const double minCoreLong,const double minCoreShort,
+                             const double minEdgeLong,const double minEdgeShort,
+                             const bool allowAggressive,const double aggressiveDiscount,const double aggressiveFloor)
    {
-      if(minCore>0.0)
-         m_minQualityCore = MathMin(0.95,minCore);
-      if(minEdge>0.0)
-         m_minQualityEdge = MathMin(0.95,minEdge);
+      if(minCoreLong>0.0)
+         m_minQualityCoreLong = MathMin(0.95,minCoreLong);
+      if(minCoreShort>0.0)
+         m_minQualityCoreShort = MathMin(0.95,minCoreShort);
+      if(minEdgeLong>0.0)
+         m_minQualityEdgeLong = MathMin(0.95,minEdgeLong);
+      if(minEdgeShort>0.0)
+         m_minQualityEdgeShort = MathMin(0.95,minEdgeShort);
       m_allowAggressiveEntries = allowAggressive;
       if(aggressiveDiscount>=0.0)
          m_aggressiveDiscount = aggressiveDiscount;
       if(aggressiveFloor>0.0)
          m_aggressiveFloor = aggressiveFloor;
+   }
+
+   void SetDirectionalPermissions(const bool allowLongs,const bool allowShorts)
+   {
+      m_allowLongs = allowLongs;
+      m_allowShorts = allowShorts;
    }
 
    void ConfigureNeutralPolicy(const bool allowNeutralEdge,const double neutralRiskScale)
@@ -428,17 +471,21 @@ public:
          return false;
       }
 
-      double baseQuality = (session==SESSION_CORE ? m_minQualityCore : m_minQualityEdge);
-      if(fallbackMode && session!=SESSION_CORE)
-         baseQuality = m_minQualityEdge;
-      double minQuality = baseQuality;
+      double baseQualityLong = BaseQualityFor(session,+1,fallbackMode);
+      double baseQualityShort = BaseQualityFor(session,-1,fallbackMode);
+      double minQualityLong = baseQualityLong;
+      double minQualityShort = baseQualityShort;
       bool aggressiveApplied = false;
       if(m_allowAggressiveEntries && allowAggressiveBoost && bias.strength==BIAS_STRONG)
       {
-         minQuality = MathMax(m_aggressiveFloor,minQuality - m_aggressiveDiscount);
+         minQualityLong = MathMax(m_aggressiveFloor,minQualityLong - m_aggressiveDiscount);
+         minQualityShort = MathMax(m_aggressiveFloor,minQualityShort - m_aggressiveDiscount);
          aggressiveApplied = true;
          if(verbose)
-            PrintFormat("ENTRY TRACE: aggressive mode -> minQuality adjusted to %.2f (base %.2f)",minQuality,baseQuality);
+         {
+            PrintFormat("ENTRY TRACE: aggressive mode -> minQuality adjusted (long=%.2f short=%.2f)",
+                        minQualityLong,minQualityShort);
+         }
       }
 
       bool allowModerate = fallbackMode;
@@ -480,6 +527,12 @@ public:
       bool neutralMode = (activeStrength==BIAS_NEUTRAL || evalDirection==0);
       bool produced = false;
 
+      signal.biasDirection = bias.direction;
+      signal.biasScore = bias.score;
+      signal.biasSlopeH1 = bias.slopeH1;
+      signal.biasSlopeH4 = bias.slopeH4;
+      signal.biasSlopeD1 = bias.slopeD1;
+
       if(neutralMode)
       {
          double bestQuality = -1.0;
@@ -488,6 +541,11 @@ public:
          for(int i=0;i<2;i++)
          {
             EntrySignal temp = signal;
+            if(dirs[i]>0 && !m_allowLongs)
+               continue;
+            if(dirs[i]<0 && !m_allowShorts)
+               continue;
+            double minQuality = (dirs[i]>0 ? minQualityLong : minQualityShort);
             if(!SelectBestSignal(dirs[i],atr,bias,session,relaxedMomentum,verbose,minQuality,bars,count,temp))
                continue;
             if(!temp.strongSetup)
@@ -522,6 +580,20 @@ public:
       else
       {
          int direction = (evalDirection!=0 ? evalDirection : (bias.score>=0.0 ? +1 : -1));
+         if(direction>0 && !m_allowLongs)
+         {
+            if(verbose)
+               Print("ENTRY TRACE: abort -> long setups disabled");
+            return false;
+         }
+         if(direction<0 && !m_allowShorts)
+         {
+            if(verbose)
+               Print("ENTRY TRACE: abort -> short setups disabled");
+            return false;
+         }
+         double minQuality = (direction>0 ? minQualityLong : minQualityShort);
+         double baseQuality = (direction>0 ? baseQualityLong : baseQualityShort);
          if(SelectBestSignal(direction,atr,bias,session,relaxedMomentum,verbose,minQuality,bars,count,signal))
          {
             signal.biasStrength = activeStrength;
