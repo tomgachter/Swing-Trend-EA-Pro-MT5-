@@ -121,8 +121,6 @@ public:
       }
 
       double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
-      if(freeMargin<=0.0)
-         freeMargin = AccountInfoDouble(ACCOUNT_FREEMARGIN);
       double minRatio = 1.1;
       bool ok = (freeMargin > margin * minRatio);
       if(m_debugMode || m_verboseMode)
