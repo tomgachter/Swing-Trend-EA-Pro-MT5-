@@ -71,6 +71,7 @@ private:
    double          m_lastSlopeH4;
    double          m_lastSlopeD1;
    bool            m_debug;
+   int             m_legacyVotesRequired;
    TrendBias       m_lastBias;
 
    double NormalizedSlope(const double now,const double prev,const double atr) const
@@ -85,7 +86,8 @@ public:
                  m_lastEmaH1(0.0), m_lastEmaH4(0.0), m_lastEmaD1(0.0),
                  m_thH1Base(0.020), m_thH4Base(0.018), m_thD1Base(0.015), m_thresholdScale(1.0),
                  m_lastSlopeH1(0.0), m_lastSlopeH4(0.0), m_lastSlopeD1(0.0),
-                 m_debug(false)
+                 m_debug(false),
+                 m_legacyVotesRequired(0)
    {
       m_lastBias = TrendBias();
    }
@@ -121,7 +123,7 @@ public:
    void ConfigureThresholds(const int votesRequired,
                             const double thH1,const double thH4,const double thD1)
    {
-      (void)votesRequired; // legacy input kept for preset compatibility
+      m_legacyVotesRequired = votesRequired; // legacy input kept for preset compatibility
       m_thH1Base = MathMax(0.0,thH1);
       m_thH4Base = MathMax(0.0,thH4);
       m_thD1Base = MathMax(0.0,thD1);
@@ -320,7 +322,7 @@ public:
       return true;
    }
 
-   const TrendBias& LastBias() const
+   TrendBias LastBias() const
    {
       return m_lastBias;
    }
