@@ -2,7 +2,7 @@
 //| XAU_Swing_TrendEA_Pro.mq5                                        |
 //| Refactored swing/breakout Expert Advisor for XAUUSD (MT5)        |
 //| Session: 07:00-14:45, Bias votes: EMA20(H1)/EMA34(H4)/EMA50(D1)  |
-//| Risk: ATR-aligned SL/TP, partial exits + ATR trailing            |
+//| Risk: ATR stop sizing, R-multiple partials/trailing/time-stop    |
 //+------------------------------------------------------------------+
 #property strict
 
@@ -18,46 +18,77 @@
 #include "modules/RiskEngine.mqh"
 #include "modules/ExitEngine.mqh"
 
+// --- Risk / session framework -------------------------------------------------
 input RiskMode         InpRiskMode = RISK_PERCENT_PER_TRADE;  // Risk allocation model
-input double            RiskPerTrade = 0.75;                // Percent or lots depending on mode
-input double            MaxDailyRiskPercent = 5.0;          // Daily loss+open risk cap in %
-input double            MaxEquityDDPercentForCloseAll = 10; // Hard equity drawdown kill switch
-input ulong             MagicNumber = 20241026;             // Trade identifier
-input string            TradeComment = "XAU_Swing_TrendEA_Pro";
-input bool              EnableChartAnnotations = true;
-input bool              RandomizeEntryExit = false;
-input int               PropFirmDayStartHour = 0;           // Serverzeit-Offset für Tagesanker
-input bool              UseStaticOverallDD   = true;        // Statischer Gesamt-DD (prop-konform)
-input int               SlippageBudgetPoints = 80;          // Worst-case Slippage für Budgetprüfung
-input int               MaxSpreadPoints      = 200;         // Maximaler Spread in Punkten für neue Einstiege
-input int               SessionStartHour = 7;
-input int               SessionStartMinute = 0;
-input int               SessionEndHour = 14;
-input int               SessionEndMinute = 45;
-// Bias tuning
-input int               BiasVotesRequired     = 2;    // Mehrheitsvotum
-input double            BiasSlopeThH1         = 0.020;
-input double            BiasSlopeThH4         = 0.018;
-input double            BiasSlopeThD1         = 0.015;
-input bool              AllowNeutralBiasOnEdge= true; // Edge-Session: starkes Set-up darf trotz neutralem Bias
-// Entry sensitivity
-input double            PullbackBodyATRMin    = 0.35; // bisher ~0.55 → Frequenz rauf
-input double            BreakoutImpulseATRMin = 0.35; // bisher ~0.45–0.55 → Frequenz rauf
-input int               BreakoutRangeBars     = 5;    // bisher 6 → etwas früher
-// Entry timeframe
-input ENUM_TIMEFRAMES   EntryTF              = PERIOD_H1;
-// Fallback relaxation
-// Testing: defaults (~Pepperstone XAUUSD H1, 2025.01-11) average ~3-5 trades/week, higher in volatile months.
-input bool              EnableWeekdayFallback = true;   // relaxed mode not only on Friday
-input int               FallbackMinHour      = 12;      // earliest hour for fallback
-input int               FallbackMaxPer7D     = 2;       // fire when < this in last 7D
-input double            StopLossATRMultiplier = 1.2;
-input double            PartialTPATRMultiplier = 0.7;
-input double            TrailingATRMultiplier = 2.0;
-input bool              UseDynamicRisk = true;
-input bool              EnableFallbackEntry = true;
-input bool              DebugMode = true;    // ausführliches Logging + Debug-Fallbacks
-input bool              ForceVerboseDecisionLog = false; // erzwingt detaillierte Entscheidungs-Logs ohne Debug-Overrides
+input double           RiskPerTrade = 0.75;                   // Percent or lots depending on mode
+input double           MaxDailyRiskPercent = 5.0;             // Daily loss+open risk cap in %
+input double           MaxEquityDDPercentForCloseAll = 12.0;  // Hard equity drawdown kill switch
+input ulong            MagicNumber = 20241026;                // Trade identifier
+input string           TradeComment = "XAU_Swing_TrendEA_Pro";
+input bool             EnableChartAnnotations = true;
+input bool             RandomizeEntryExit = false;
+input int              PropFirmDayStartHour = 0;              // Serverzeit-Offset für Tagesanker
+input bool             UseStaticOverallDD   = true;           // Statischer Gesamt-DD (prop-konform)
+input int              SlippageBudgetPoints = 80;             // Worst-case Slippage für Budgetprüfung
+input int              MaxSpreadPoints      = 200;            // Maximaler Spread in Punkten für neue Einstiege
+input int              SessionStartHour     = 7;
+input int              SessionStartMinute   = 0;
+input int              SessionEndHour       = 14;
+input int              SessionEndMinute     = 45;
+input bool             AllowSessionOverrideInDebug = false;
+
+// Balanced XAU H1 preset reference (see README for symbol-specific tweaks):
+// RiskPerTrade=0.75, MaxDailyRiskPercent=5, MaxEquityDDPercentForCloseAll=12,
+// BiasSlopeThH1/H4/D1=0.020/0.018/0.015, MinEntryQualityCore/Edge=0.7/0.8,
+// PartialCloseFraction=0.5, BreakEven_R=1.0, PartialTP_R=1.2, FinalTP_R=2.5,
+// TrailStart_R=1.5, TrailDistance_R=1.0, MaxBarsInTrade=30, MaxNewTradesPerDay=5,
+// MaxLosingTradesPerDay=3, MaxLosingTradesInARow=3, RiskScaleAfterLosingStreak=0.5.
+
+// --- Bias tuning -------------------------------------------------------------
+input int              BiasVotesRequired     = 2;      // Mehrheitsvotum (kept for compatibility)
+input double           BiasSlopeThH1         = 0.020;
+input double           BiasSlopeThH4         = 0.018;
+input double           BiasSlopeThD1         = 0.015;
+input bool             AllowNeutralBiasOnEdge= true;   // Edge-Session: starkes Setup darf trotz neutralem Bias
+input double           NeutralBiasRiskScale  = 0.50;   // Risiko-Reduktion bei neutralem Bias Override
+
+// --- Entry sensitivity & scoring --------------------------------------------
+input double           PullbackBodyATRMin    = 0.35;   // Mindestkörpergröße relativ ATR
+input double           BreakoutImpulseATRMin = 0.35;   // Mindestimpuls relativ ATR
+input int              BreakoutRangeBars     = 5;      // Range-Breite für Breakout-Box
+input double           MinEntryQualityCore   = 0.70;   // Score-Schwelle Kernsession
+input double           MinEntryQualityEdge   = 0.80;   // Score-Schwelle Edge/Fallback
+input bool             AllowAggressiveEntries= true;   // Aggressiver handeln bei positivem Lauf
+input int              MaxNewTradesPerDay    = 5;      // Maximal neue Einstiege pro Tag
+input ENUM_TIMEFRAMES  EntryTF               = PERIOD_H1;
+
+// --- Fallback & bias relaxation ---------------------------------------------
+input bool             EnableWeekdayFallback = true;   // relaxed mode not only on Friday
+input int              FallbackMinHour       = 12;     // earliest hour for fallback
+input int              FallbackMaxPer7D      = 2;      // fire when < this in last 7D
+input double           StopLossATRMultiplier = 1.2;    // initial SL = ATR * multiplier
+input bool             UseDynamicRisk        = true;
+input bool             EnableFallbackEntry   = true;
+
+// --- R-based trade management ------------------------------------------------
+input double           PartialCloseFraction  = 0.50;   // Anteil der Position beim Teilgewinn
+input double           BreakEven_R           = 1.0;    // ab 1R SL auf Break-even
+input double           PartialTP_R           = 1.2;    // Teilgewinn-Level in R
+input double           FinalTP_R             = 2.5;    // finales Ziel in R (wenn hartes TP aktiv)
+input double           TrailStart_R          = 1.5;    // ab dieser R-Multiple trailen
+input double           TrailDistance_R       = 1.0;    // Abstand in R für Trailing-Stop
+input bool             UseHardFinalTP        = true;   // TP beim Entry setzen
+input bool             UseTimeStop           = true;   // Max-Bars-Stop aktivieren
+input int              MaxBarsInTrade        = 30;     // Zeit-Stop (Bars des EntryTF)
+input double           TimeStopProtectR      = 0.5;    // SL auf xR anziehen bei Time-Stop
+
+// --- Risk discipline extensions ---------------------------------------------
+input int              MaxLosingTradesPerDay = 3;
+input int              MaxLosingTradesInARow = 3;
+input double           RiskScaleAfterLosingStreak = 0.50; // <0 => Handel pausiert
+
+input bool             DebugMode = true;    // ausführliches Logging + Debug-Fallbacks
+input bool             ForceVerboseDecisionLog = false; // erzwingt detaillierte Entscheidungs-Logs ohne Debug-Overrides
 
 //--- globals
 BrokerUtils   gBroker;
@@ -74,6 +105,9 @@ datetime      gEntryHistory[];
 int           gFallbackWeekId = -1;
 bool          gFallbackUsedThisWeek = false;
 bool          gVerboseDecisionLog = false;
+const int     RECENT_TRADE_WINDOW = 10;
+double        gRecentTradePnL[RECENT_TRADE_WINDOW];
+int           gRecentTradeCount = 0;
 
 //--- helper declarations
 bool IsNewBar();
@@ -88,6 +122,9 @@ void CleanupEntryHistory(const datetime reference);
 int  EntriesLastSevenDays(const datetime reference);
 int  ComputeWeekId(const datetime time);
 bool ShouldUseFallbackEntry(const datetime signalTime,const int recentEntries);
+void ResetRecentPnL();
+void RecordClosedTradePnL(const double profit);
+bool RecentPnLPositive();
 
 //+------------------------------------------------------------------+
 //| Expert initialization                                            |
@@ -97,17 +134,24 @@ int OnInit()
    gVerboseDecisionLog = (DebugMode || ForceVerboseDecisionLog);
    gBroker.Configure(MagicNumber,TradeComment,20);
    gSession.Configure(SessionStartHour,SessionStartMinute,SessionEndHour,SessionEndMinute);
-   gSession.SetDebugMode(DebugMode);
+   gSession.SetDebugMode(DebugMode,AllowSessionOverrideInDebug);
    gEntry.Configure(RandomizeEntryExit);
    gEntry.ConfigureSensitivity(PullbackBodyATRMin,BreakoutImpulseATRMin,BreakoutRangeBars);
-   gEntry.SetMultipliers(StopLossATRMultiplier,PartialTPATRMultiplier,TrailingATRMultiplier);
-   gExit.Configure(gEntry.TrailMultiplier(),15.0);
+   gEntry.SetStopMultiplier(StopLossATRMultiplier);
+   gEntry.SetQualityThresholds(MinEntryQualityCore,MinEntryQualityEdge,AllowAggressiveEntries,0.05,0.60);
+   gEntry.ConfigureNeutralPolicy(AllowNeutralBiasOnEdge,NeutralBiasRiskScale);
+   gExit.ConfigureRManagement(PartialCloseFraction,BreakEven_R,PartialTP_R,FinalTP_R,TrailStart_R,TrailDistance_R,
+                              UseHardFinalTP,UseTimeStop,MaxBarsInTrade,TimeStopProtectR);
+   gExit.SetEntryTimeframe(EntryTF);
+   gExit.SetVerbose(gVerboseDecisionLog);
    string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MagicNumber);
    gRisk.Configure(InpRiskMode,RiskPerTrade,MaxDailyRiskPercent,MaxEquityDDPercentForCloseAll,
                    PropFirmDayStartHour,persistKey,UseStaticOverallDD,(double)SlippageBudgetPoints);
    gRisk.SetDebugMode(DebugMode);
    gRisk.SetVerboseMode(gVerboseDecisionLog);
    gRisk.SetDynamicRiskEnabled(UseDynamicRisk);
+   // Daily discipline guard: cap trades / losing streaks in prop-firm style sessions.
+   gRisk.ConfigureTradeDiscipline(MaxNewTradesPerDay,MaxLosingTradesPerDay,MaxLosingTradesInARow,RiskScaleAfterLosingStreak);
    if(!gRegime.Init(_Symbol,14))
    {
       Print("Failed to initialise regime filter");
@@ -130,6 +174,7 @@ int OnInit()
    ArrayResize(gEntryHistory,0);
    gFallbackWeekId = -1;
    gFallbackUsedThisWeek = false;
+   ResetRecentPnL();
    return INIT_SUCCEEDED;
 }
 
@@ -208,9 +253,7 @@ void EvaluateNewBar()
       gFallbackUsedThisWeek = false;
    }
    bool useFallback = ShouldUseFallbackEntry(signalTime,recentEntries);
-   double slopeScale = 1.0;
-   if(useFallback)
-      slopeScale *= 0.5;
+   double slopeScale = (useFallback ? 0.75 : 1.0);
    gBias.SetSlopeThreshold(slopeScale);
    // Diagnose: Zuvor brach die Entry-Kette still ab. Das detaillierte Logging macht jetzt sichtbar,
    // welche Stufe (Bias/Session/Daten) einen Trade verhindert.
@@ -226,6 +269,18 @@ void EvaluateNewBar()
          PrintFormat("ENTRY TRACE: Bias update failed at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
       }
       return;
+   }
+
+   TrendBias bias;
+   gBias.ComputeTrendBias(bias,useFallback,useFallback);
+   if(gVerboseDecisionLog)
+   {
+      PrintFormat("BIAS TRACE: dir=%d strength=%d score=%.3f votesStrong L%d/S%d votesNear L%d/S%d slopes=%.3f/%.3f/%.3f th=%.3f/%.3f/%.3f",
+                  bias.direction,(int)bias.strength,bias.score,
+                  bias.votesStrongLong,bias.votesStrongShort,
+                  bias.votesNearLong,bias.votesNearShort,
+                  bias.slopeH1,bias.slopeH4,bias.slopeD1,
+                  bias.thresholdH1,bias.thresholdH4,bias.thresholdD1);
    }
 
    SessionWindow window;
@@ -252,7 +307,8 @@ void EvaluateNewBar()
    }
 
    EntrySignal signal;
-   if(!gEntry.Evaluate(gBias,gRegime,window,rates,copied,useFallback,AllowNeutralBiasOnEdge,gVerboseDecisionLog,signal))
+   bool allowAggressiveBoost = (AllowAggressiveEntries && RecentPnLPositive());
+   if(!gEntry.Evaluate(bias,gRegime,window,rates,copied,useFallback,useFallback,gVerboseDecisionLog,allowAggressiveBoost,signal))
    {
       if(gVerboseDecisionLog)
          Print("ENTRY TRACE: EntryEngine returned no signal");
@@ -308,9 +364,9 @@ void AttemptEntry(const EntrySignal &signal)
 {
    if(DebugMode)
    {
-      PrintFormat("ENTRY DEBUG: AttemptEntry dir=%d entry=%.2f stop=%.2f fallback=%s",
-                  signal.direction,signal.entryPrice,signal.stopLoss,
-                  signal.fallbackRelaxed?"true":"false");
+      PrintFormat("ENTRY DEBUG: AttemptEntry dir=%d entry=%.2f stop=%.2f quality=%.2f biasStrength=%d riskScale=%.2f fallback=%s",
+                  signal.direction,signal.entryPrice,signal.stopLoss,signal.quality,(int)signal.biasStrength,
+                  signal.riskScale,signal.fallbackRelaxed?"true":"false");
    }
    double stopPoints = gSizer.StopDistancePoints(signal.entryPrice,signal.stopLoss);
    if(stopPoints<=0.0)
@@ -349,7 +405,7 @@ void AttemptEntry(const EntrySignal &signal)
 
    double volume=0.0;
    double riskPercent=0.0;
-   if(!gRisk.AllowNewTrade(stopPoints,gSizer,gRegime,volume,riskPercent))
+   if(!gRisk.AllowNewTrade(stopPoints,gSizer,gRegime,volume,riskPercent,signal.riskScale))
    {
       AnnotateChart("Risk guard prevented entry",clrTomato);
       if(DebugMode)
@@ -371,7 +427,11 @@ void AttemptEntry(const EntrySignal &signal)
       return;
    }
 
-   double tp = 0.0; // trailing handles final exit
+   double tp = 0.0;
+   if(UseHardFinalTP)
+   {
+      tp = signal.entryPrice + signal.direction*FinalTP_R*stopPoints*point;
+   }
    if(!gBroker.OpenPosition(signal.direction,volume,signal.entryPrice,signal.stopLoss,tp))
    {
       if(DebugMode)
@@ -501,6 +561,38 @@ bool ShouldUseFallbackEntry(const datetime signalTime,const int recentEntries)
    return true;
 }
 
+void ResetRecentPnL()
+{
+   for(int i=0;i<RECENT_TRADE_WINDOW;i++)
+      gRecentTradePnL[i] = 0.0;
+   gRecentTradeCount = 0;
+}
+
+void RecordClosedTradePnL(const double profit)
+{
+   if(RECENT_TRADE_WINDOW<=0)
+      return;
+   if(gRecentTradeCount<RECENT_TRADE_WINDOW)
+   {
+      gRecentTradePnL[gRecentTradeCount++] = profit;
+   }
+   else
+   {
+      for(int i=1;i<RECENT_TRADE_WINDOW;i++)
+         gRecentTradePnL[i-1] = gRecentTradePnL[i];
+      gRecentTradePnL[RECENT_TRADE_WINDOW-1] = profit;
+   }
+}
+
+bool RecentPnLPositive()
+{
+   // Used to temporarily relax quality thresholds when the last trades netted profit.
+   double sum = 0.0;
+   for(int i=0;i<gRecentTradeCount;i++)
+      sum += gRecentTradePnL[i];
+   return (gRecentTradeCount>0 && sum>0.0);
+}
+
 //+------------------------------------------------------------------+
 //| Trade transaction                                                |
 //+------------------------------------------------------------------+
@@ -514,10 +606,15 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
       ulong positionId = (ulong)HistoryDealGetInteger(deal,DEAL_POSITION_ID);
       if(entryType==DEAL_ENTRY_OUT)
       {
+         bool positionStillOpen = PositionSelectByTicket(positionId);
          double riskRemoved = 0.0;
-         if(!PositionSelectByTicket(positionId))
+         if(!positionStillOpen)
             riskRemoved = gExit.OnPositionClosed(positionId);
-         gRisk.OnTradeClosed(profit,riskRemoved);
+         if(!positionStillOpen)
+         {
+            gRisk.OnTradeClosed(profit,riskRemoved);
+            RecordClosedTradePnL(profit);
+         }
       }
    }
 }

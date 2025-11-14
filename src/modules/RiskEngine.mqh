@@ -183,15 +183,32 @@ public:
       m_dailyGuard.SetVerboseMode(verbose);
    }
 
-   bool AllowNewTrade(const double stopPoints,PositionSizer &sizer,RegimeFilter &regime,double &volume,double &riskPercent)
+   bool AllowNewTrade(const double stopPoints,PositionSizer &sizer,RegimeFilter &regime,double &volume,double &riskPercent,const double manualRiskScale=1.0)
    {
+      if(manualRiskScale<=0.0)
+      {
+         if(m_verboseMode)
+            Print("RISK DEBUG: manual risk scale <= 0 -> entry blocked");
+         return false;
+      }
+
+      if(!m_dailyGuard.CanOpenNewTrade())
+      {
+         if(m_verboseMode)
+            Print("RISK DEBUG: trade limit reached -> entry blocked");
+         if(m_debugMode)
+            Print("RISK DEBUG: overriding trade limit due to debug mode");
+         else
+            return false;
+      }
+
       double balance = AccountInfoDouble(ACCOUNT_BALANCE);
       double riskAdjust = m_dailyGuard.RiskReductionFactor();
       double effectiveSetting = m_riskSetting;
       if(m_debugMode || m_verboseMode)
       {
-         PrintFormat("RISK DEBUG: stopPoints=%.1f balance=%.2f riskSetting=%.2f riskAdjust=%.2f mode=%d",
-                     stopPoints,balance,m_riskSetting,riskAdjust,(int)m_riskMode);
+         PrintFormat("RISK DEBUG: stopPoints=%.1f balance=%.2f riskSetting=%.2f riskAdjust=%.2f manualScale=%.2f mode=%d",
+                     stopPoints,balance,m_riskSetting,riskAdjust,manualRiskScale,(int)m_riskMode);
       }
       if(m_useDynamicRisk)
       {
@@ -203,7 +220,8 @@ public:
             factor = m_lowFactor;
          effectiveSetting *= factor;
       }
-      double lot = sizer.CalculateVolume(m_riskMode,effectiveSetting,stopPoints,balance,riskAdjust);
+      double combinedAdjust = riskAdjust * manualRiskScale;
+      double lot = sizer.CalculateVolume(m_riskMode,effectiveSetting,stopPoints,balance,combinedAdjust);
       SymbolContext ctx = sizer.Context();
       if(m_debugMode || m_verboseMode)
       {
@@ -246,12 +264,12 @@ public:
       }
       else
       {
-         riskPercent = effectiveSetting*riskAdjust;
+         riskPercent = effectiveSetting*combinedAdjust;
       }
 
       if(m_debugMode || m_verboseMode)
       {
-         PrintFormat("RISK DEBUG: riskPercent=%.2f%%",riskPercent);
+         PrintFormat("RISK DEBUG: riskPercent=%.2f%% (combinedAdjust=%.2f)",riskPercent,combinedAdjust);
       }
 
       double riskWcPercent = riskPercent;
@@ -300,6 +318,7 @@ public:
    {
       if(riskPercent>0.0)
          m_dailyGuard.RegisterOpenRisk(riskPercent);
+      m_dailyGuard.RegisterNewTrade();
    }
 
    void OnTradeClosed(const double profit,const double riskPercent)
@@ -307,6 +326,16 @@ public:
       if(riskPercent>0.0)
          m_dailyGuard.RemoveOpenRisk(riskPercent);
       m_dailyGuard.RegisterResult(profit,AccountInfoDouble(ACCOUNT_BALANCE));
+   }
+
+   void ConfigureTradeDiscipline(const int maxNewTrades,const int maxLosingTrades,const int maxLosingStreak,const double riskScaleAfterStreak)
+   {
+      m_dailyGuard.ConfigureTradeDiscipline(maxNewTrades,maxLosingTrades,maxLosingStreak,riskScaleAfterStreak);
+   }
+
+   bool CanOpenNewTrade() const
+   {
+      return m_dailyGuard.CanOpenNewTrade();
    }
 
    RiskMode Mode() { return m_riskMode; }

@@ -19,13 +19,24 @@ private:
    datetime m_lastHeartbeat;
    bool     m_debugMode;
    bool     m_verboseMode;
+   int      m_maxNewTradesPerDay;
+   int      m_newTradesToday;
+   int      m_maxLosingTradesPerDay;
+   int      m_lossesToday;
+   int      m_maxConsecutiveLosses;
+   double   m_lossStreakRiskScale;
+   bool     m_pauseTradingForDay;
 
 public:
    DailyGuard(): m_maxDailyRiskPercent(6.0), m_realizedLossPercent(0.0), m_openRiskPercent(0.0),
                  m_riskReductionFactor(1.0), m_consecutiveLosses(0), m_currentDay(0),
                  m_dayBalanceAnchor(0.0), m_dayStartHour(0), m_daySerial(0), m_gvKey(""),
                  m_dayEquityAnchor(0.0), m_dayWorstEquity(0.0), m_lastHeartbeat(0),
-                 m_debugMode(false), m_verboseMode(false)
+                 m_debugMode(false), m_verboseMode(false),
+                 m_maxNewTradesPerDay(0), m_newTradesToday(0),
+                 m_maxLosingTradesPerDay(0), m_lossesToday(0),
+                 m_maxConsecutiveLosses(0), m_lossStreakRiskScale(0.5),
+                 m_pauseTradingForDay(false)
    {
    }
 
@@ -96,6 +107,9 @@ public:
       m_riskReductionFactor = 1.0;
       m_consecutiveLosses = 0;
       m_lastHeartbeat = now;
+      m_newTradesToday = 0;
+      m_lossesToday = 0;
+      m_pauseTradingForDay = false;
       if(m_gvKey!="")
       {
          GlobalVariableSet(m_gvKey+"_SERIAL",(double)m_daySerial);
@@ -148,8 +162,23 @@ public:
       {
          m_realizedLossPercent += MathAbs(deltaPercent);
          m_consecutiveLosses++;
+         m_lossesToday++;
+         if(m_maxLosingTradesPerDay>0 && m_lossesToday>=m_maxLosingTradesPerDay)
+            m_pauseTradingForDay = true;
          if(m_consecutiveLosses>=2)
-            m_riskReductionFactor = 0.75;
+         {
+            if(m_maxConsecutiveLosses>0 && m_consecutiveLosses>=m_maxConsecutiveLosses)
+            {
+               if(m_lossStreakRiskScale>0.0)
+                  m_riskReductionFactor = MathMin(m_riskReductionFactor,m_lossStreakRiskScale);
+               else
+                  m_pauseTradingForDay = true;
+            }
+            else
+            {
+               m_riskReductionFactor = MathMin(m_riskReductionFactor,0.75);
+            }
+         }
       }
       else if(profit>0.0)
       {
@@ -215,6 +244,36 @@ public:
 
    double RiskReductionFactor() { return m_riskReductionFactor; }
    datetime CurrentDay() { return m_currentDay; }
+
+   void ConfigureTradeDiscipline(const int maxNewTrades,const int maxLossTrades,const int maxLossesInRow,const double riskScaleAfterStreak)
+   {
+      // Max trade/day and losing-streak guard. riskScaleAfterStreak<=0 pauses trading for the day.
+      m_maxNewTradesPerDay = MathMax(0,maxNewTrades);
+      m_maxLosingTradesPerDay = MathMax(0,maxLossTrades);
+      m_maxConsecutiveLosses = MathMax(0,maxLossesInRow);
+      m_lossStreakRiskScale = riskScaleAfterStreak;
+   }
+
+   void RegisterNewTrade()
+   {
+      m_newTradesToday++;
+   }
+
+   bool CanOpenNewTrade() const
+   {
+      if(m_pauseTradingForDay)
+         return false;
+      if(m_maxNewTradesPerDay>0 && m_newTradesToday>=m_maxNewTradesPerDay)
+         return false;
+      if(m_maxLosingTradesPerDay>0 && m_lossesToday>=m_maxLosingTradesPerDay)
+         return false;
+      return true;
+   }
+
+   bool TradingPausedForDay() const
+   {
+      return m_pauseTradingForDay;
+   }
 };
 
 #endif // __DAILY_GUARD_MQH__
