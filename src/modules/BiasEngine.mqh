@@ -27,6 +27,22 @@ private:
    int             m_lastVotesNeutral;
    bool            m_debug;
 
+   int DirectionFromSlope(const double now,const double prev,const double atr,
+                          const double threshold,double &slopeOut)
+   {
+      slopeOut = 0.0;
+      if(atr<=0.0)
+         return 0;
+
+      double slope = (now-prev)/atr;
+      slopeOut = slope;
+      double slopeAbs = MathAbs(slope);
+      if(slopeAbs<threshold)
+         return 0;
+
+      return (slope>0.0 ? +1 : -1);
+   }
+
 public:
    BiasEngine(): m_symbol(_Symbol), m_handleH1(INVALID_HANDLE), m_handleH4(INVALID_HANDLE), m_handleD1(INVALID_HANDLE),
                  m_lastEmaH1(0.0), m_lastEmaH4(0.0), m_lastEmaD1(0.0), m_direction(0), m_votesRequired(2),
@@ -98,25 +114,12 @@ public:
       double effThH4 = m_thH4Base*m_thresholdScale;
       double effThD1 = m_thD1Base*m_thresholdScale;
 
-      auto dirFrom = [&](const double now,const double prev,const double atr,const double th,double &slopeOut)->int
-      {
-         slopeOut = 0.0;
-         if(atr<=0.0)
-            return 0;
-         double slope = (now-prev)/atr;
-         slopeOut = slope;
-         double slopeAbs = MathAbs(slope);
-         if(slopeAbs<th)
-            return 0;
-         return (slope>0.0 ? +1 : -1);
-      };
-
       m_lastSlopeH1 = 0.0;
       m_lastSlopeH4 = 0.0;
       m_lastSlopeD1 = 0.0;
-      int d1 = dirFrom(e1[0],e1[1],atrH1,effThH1,m_lastSlopeH1);
-      int d4 = dirFrom(e4[0],e4[1],atrH4,effThH4,m_lastSlopeH4);
-      int dD = dirFrom(eD[0],eD[1],atrD1,effThD1,m_lastSlopeD1);
+      int d1 = DirectionFromSlope(e1[0],e1[1],atrH1,effThH1,m_lastSlopeH1);
+      int d4 = DirectionFromSlope(e4[0],e4[1],atrH4,effThH4,m_lastSlopeH4);
+      int dD = DirectionFromSlope(eD[0],eD[1],atrD1,effThD1,m_lastSlopeD1);
 
       m_lastVotesUp = (d1>0) + (d4>0) + (dD>0);
       m_lastVotesDown = (d1<0) + (d4<0) + (dD<0);
