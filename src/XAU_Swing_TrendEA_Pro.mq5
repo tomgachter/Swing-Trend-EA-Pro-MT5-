@@ -4,6 +4,8 @@
 //| Session: 07:00-14:45, Bias votes: EMA20(H1)/EMA34(H4)/EMA50(D1)  |
 //| Risk: ATR stop sizing, R-multiple partials/trailing/time-stop    |
 //+------------------------------------------------------------------+
+// v1.3 – 2024-05-08 – Directional score thresholds, adaptive ATR stop tightening,
+//                     extended R-management defaults and richer entry logging.
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -39,8 +41,8 @@ input bool             AllowSessionOverrideInDebug = false;
 
 // Balanced XAU H1 preset reference (see README for symbol-specific tweaks):
 // RiskPerTrade=0.75, MaxDailyRiskPercent=5, MaxEquityDDPercentForCloseAll=12,
-// BiasSlopeThH1/H4/D1=0.020/0.018/0.015, MinEntryQualityCore/Edge=0.7/0.8,
-// PartialCloseFraction=0.5, BreakEven_R=1.0, PartialTP_R=1.2, FinalTP_R=2.5,
+// BiasSlopeThH1/H4/D1=0.020/0.018/0.015, Core/Edge score long/short=0.70/0.80,
+// PartialTP1_Fraction=0.50, BreakEven_R=1.0, PartialTP1_R=1.2, HardTP_R=2.5,
 // TrailStart_R=1.5, TrailDistance_R=1.0, MaxBarsInTrade=30, MaxNewTradesPerDay=5,
 // MaxLosingTradesPerDay=3, MaxLosingTradesInARow=3, RiskScaleAfterLosingStreak=0.5.
 
@@ -53,11 +55,15 @@ input bool             AllowNeutralBiasOnEdge= true;   // Edge-Session: starkes 
 input double           NeutralBiasRiskScale  = 0.50;   // Risiko-Reduktion bei neutralem Bias Override
 
 // --- Entry sensitivity & scoring --------------------------------------------
+input bool             AllowLongs            = true;   // Long-Setups zulassen
+input bool             AllowShorts           = true;   // Short-Setups zulassen
 input double           PullbackBodyATRMin    = 0.35;   // Mindestkörpergröße relativ ATR
 input double           BreakoutImpulseATRMin = 0.35;   // Mindestimpuls relativ ATR
 input int              BreakoutRangeBars     = 5;      // Range-Breite für Breakout-Box
-input double           MinEntryQualityCore   = 0.70;   // Score-Schwelle Kernsession
-input double           MinEntryQualityEdge   = 0.80;   // Score-Schwelle Edge/Fallback
+input double           CoreScoreThresholdLong  = 0.70; // Score-Schwelle Kernsession Long
+input double           CoreScoreThresholdShort = 0.70; // Score-Schwelle Kernsession Short
+input double           EdgeScoreThresholdLong  = 0.80; // Score-Schwelle Edge/Fallback Long
+input double           EdgeScoreThresholdShort = 0.80; // Score-Schwelle Edge/Fallback Short
 input bool             AllowAggressiveEntries= true;   // Aggressiver handeln bei positivem Lauf
 input int              MaxNewTradesPerDay    = 5;      // Maximal neue Einstiege pro Tag
 input ENUM_TIMEFRAMES  EntryTF               = PERIOD_H1;
@@ -66,21 +72,25 @@ input ENUM_TIMEFRAMES  EntryTF               = PERIOD_H1;
 input bool             EnableWeekdayFallback = true;   // relaxed mode not only on Friday
 input int              FallbackMinHour       = 12;     // earliest hour for fallback
 input int              FallbackMaxPer7D      = 2;      // fire when < this in last 7D
-input double           StopLossATRMultiplier = 1.2;    // initial SL = ATR * multiplier
 input bool             UseDynamicRisk        = true;
 input bool             EnableFallbackEntry   = true;
 
 // --- R-based trade management ------------------------------------------------
-input double           PartialCloseFraction  = 0.50;   // Anteil der Position beim Teilgewinn
+input double           InitialSL_ATRMultiplier = 1.2;  // initialer SL = ATR * multiplier
+input bool             UseAdaptiveSL          = true;  // Adaptiven SL nach X Bars aktivieren
+input int              AdaptiveSL_AfterBars   = 10;    // Bars nach Entry bis enger SL aktiv wird
+input double           AdaptiveSL_ATRMultiplier = 1.2; // ATR-Multiplikator für adaptiven SL
+input double           AdaptiveSL_MinProfitR  = 0.5;   // Mindest-R-Gewinn, um engeren SL zu vermeiden
+input double           PartialTP1_Fraction   = 0.50;   // Anteil der Position beim Teilgewinn
 input double           BreakEven_R           = 1.0;    // ab 1R SL auf Break-even
-input double           PartialTP_R           = 1.2;    // Teilgewinn-Level in R
-input double           FinalTP_R             = 2.5;    // finales Ziel in R (wenn hartes TP aktiv)
+input double           PartialTP1_R          = 1.2;    // Teilgewinn-Level in R
+input double           HardTP_R              = 2.5;    // finales Ziel in R (wenn hartes TP aktiv)
 input double           TrailStart_R          = 1.5;    // ab dieser R-Multiple trailen
 input double           TrailDistance_R       = 1.0;    // Abstand in R für Trailing-Stop
 input bool             UseHardFinalTP        = true;   // TP beim Entry setzen
 input bool             UseTimeStop           = true;   // Max-Bars-Stop aktivieren
 input int              MaxBarsInTrade        = 30;     // Zeit-Stop (Bars des EntryTF)
-input double           TimeStopProtectR      = 0.5;    // SL auf xR anziehen bei Time-Stop
+input double           TimeStopProtectR      = 0.5;    // SL auf xR anziehen bei Time-Stop (auch <0 erlaubt)
 
 // --- Risk discipline extensions ---------------------------------------------
 input int              MaxLosingTradesPerDay = 3;
@@ -119,6 +129,8 @@ void ManageOpenPositions();
 bool HasDirectionalPosition(const int direction);
 void AnnotateChart(const string message,const color col=clrDodgerBlue);
 void AttemptEntry(const EntrySignal &signal);
+string SessionWindowToString(const SessionWindow window,const bool fallback);
+string DirectionToString(const int direction);
 void CloseAllPositions();
 void RecordEntryTime(const datetime entryTime,const bool fallbackTrade);
 void CleanupEntryHistory(const datetime reference);
@@ -140,11 +152,15 @@ int OnInit()
    gSession.SetDebugMode(DebugMode,AllowSessionOverrideInDebug);
    gEntry.Configure(RandomizeEntryExit);
    gEntry.ConfigureSensitivity(PullbackBodyATRMin,BreakoutImpulseATRMin,BreakoutRangeBars);
-   gEntry.SetStopMultiplier(StopLossATRMultiplier);
-   gEntry.SetQualityThresholds(MinEntryQualityCore,MinEntryQualityEdge,AllowAggressiveEntries,0.05,0.60);
+   gEntry.SetStopMultiplier(InitialSL_ATRMultiplier);
+   gEntry.SetQualityThresholds(CoreScoreThresholdLong,CoreScoreThresholdShort,
+                               EdgeScoreThresholdLong,EdgeScoreThresholdShort,
+                               AllowAggressiveEntries,0.05,0.60);
+   gEntry.SetDirectionalPermissions(AllowLongs,AllowShorts);
    gEntry.ConfigureNeutralPolicy(AllowNeutralBiasOnEdge,NeutralBiasRiskScale);
-   gExit.ConfigureRManagement(PartialCloseFraction,BreakEven_R,PartialTP_R,FinalTP_R,TrailStart_R,TrailDistance_R,
+   gExit.ConfigureRManagement(PartialTP1_Fraction,BreakEven_R,PartialTP1_R,HardTP_R,TrailStart_R,TrailDistance_R,
                               UseHardFinalTP,UseTimeStop,MaxBarsInTrade,TimeStopProtectR);
+   gExit.ConfigureAdaptiveSL(UseAdaptiveSL,AdaptiveSL_AfterBars,AdaptiveSL_ATRMultiplier,AdaptiveSL_MinProfitR);
    gExit.SetEntryTimeframe(EntryTF);
    gExit.SetVerbose(gVerboseDecisionLog);
    string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MagicNumber);
@@ -245,6 +261,7 @@ bool IsNewBar()
 //+------------------------------------------------------------------+
 //| Evaluate entries on bar close                                    |
 //+------------------------------------------------------------------+
+// EvaluateNewBar orchestrates the bias/session filters and score thresholds on each completed bar.
 void EvaluateNewBar()
 {
    datetime signalTime = gLastBarTime;
@@ -330,6 +347,7 @@ void EvaluateNewBar()
 //+------------------------------------------------------------------+
 //| Manage open positions                                            |
 //+------------------------------------------------------------------+
+// ManageOpenPositions delegates all R-based exit logic to the ExitEngine.
 void ManageOpenPositions()
 {
    gExit.Manage(gBroker,gSizer,gRegime);
@@ -363,10 +381,17 @@ bool HasDirectionalPosition(const int direction)
 //+------------------------------------------------------------------+
 //| Attempt to open trade                                            |
 //+------------------------------------------------------------------+
+// AttemptEntry performs spread/risk checks, position sizing and order placement for validated signals.
 void AttemptEntry(const EntrySignal &signal)
 {
    if(DebugMode)
    {
+      string dirStr = DirectionToString(signal.direction);
+      string sessionStr = SessionWindowToString(signal.session,signal.fallbackRelaxed);
+      PrintFormat("ENTRY DEBUG: signal dir=%s score=%.2f biasDir=%d biasScore=%.2f slopes=H1 %.3f H4 %.3f D1 %.3f session=%s fallback=%s",
+                  dirStr,signal.quality,signal.biasDirection,signal.biasScore,
+                  signal.biasSlopeH1,signal.biasSlopeH4,signal.biasSlopeD1,
+                  sessionStr,signal.fallbackRelaxed?"true":"false");
       PrintFormat("ENTRY DEBUG: AttemptEntry dir=%d entry=%.2f stop=%.2f quality=%.2f biasStrength=%d riskScale=%.2f fallback=%s",
                   signal.direction,signal.entryPrice,signal.stopLoss,signal.quality,(int)signal.biasStrength,
                   signal.riskScale,signal.fallbackRelaxed?"true":"false");
@@ -433,7 +458,7 @@ void AttemptEntry(const EntrySignal &signal)
    double tp = 0.0;
    if(UseHardFinalTP)
    {
-      tp = signal.entryPrice + signal.direction*FinalTP_R*stopPoints*point;
+      tp = signal.entryPrice + signal.direction*HardTP_R*stopPoints*point;
    }
    if(!gBroker.OpenPosition(signal.direction,volume,signal.entryPrice,signal.stopLoss,tp))
    {
@@ -461,6 +486,27 @@ void AttemptEntry(const EntrySignal &signal)
       RecordEntryTime(TimeCurrent(),signal.fallbackRelaxed);
       break;
    }
+}
+
+string SessionWindowToString(const SessionWindow window,const bool fallback)
+{
+   string label = "NONE";
+   if(window==SESSION_CORE)
+      label = "CORE";
+   else if(window==SESSION_EDGE)
+      label = "EDGE";
+   if(fallback && window!=SESSION_NONE)
+      label = label + " (FALLBACK)";
+   return label;
+}
+
+string DirectionToString(const int direction)
+{
+   if(direction>0)
+      return "LONG";
+   if(direction<0)
+      return "SHORT";
+   return "FLAT";
 }
 
 //+------------------------------------------------------------------+
