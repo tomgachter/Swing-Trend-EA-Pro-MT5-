@@ -14,12 +14,28 @@ To raise signal cadence you can now adjust these exposed inputs (suggested range
 
 * `MinVotesForBias` (1–3, default 2) – minimum EMA votes required for directional bias.
 * `BiasSlopeThreshold` (0.010–0.030) – base EMA slope ratio; lower numbers admit flatter trends.
+* `BiasScoreThresholdCore/Edge` (0.04–0.10) – multi-timeframe slope sum required before entries are considered.
+* `BiasSlopeConfirmH1/H4/D1` (0.010–0.025) – absolute slope confirmations per timeframe before neutral/weak trends are traded.
 * `PullbackBandATR` (0.20–0.60) – ATR multiple for the pullback touch band, scaled per regime.
 * `PullbackMomentumATR` (0.20–0.60) – ATR multiple for the pullback candle body/momentum gate.
 * `BreakoutImpulseATR` (0.25–0.60) – ATR multiple demanded from breakout bodies before entry.
 * `BreakoutLookback` (4–10) – number of completed bars forming the breakout box.
 * `EntryTF` (PERIOD_M15–PERIOD_H4) – chart timeframe feeding the entry engine (bias votes stay on H1/H4/D1).
 * `EnableWeekdayFallback`, `FallbackMinHour`, `FallbackMaxPer7D` – weekday relaxation controls for the fallback entry cadence.
+* `LateEntryCutoffHour/Minute` – optional session cap when late-day trades underperform.
+
+### Balanced XAU H1 v2 quick preset
+
+| Block | Parameters |
+| --- | --- |
+| Risk | `RiskPerTrade=0.60`, `MaxDailyRiskPercent=5`, `MaxEquityDDPercentForCloseAll=12`, `RegimeLowRiskScale=0.60`, `RegimeHighRiskScale=1.05`, `MaxNewTradesPerDay=3` |
+| Bias | `BiasSlopeThH1/H4/D1=0.020/0.018/0.015`, `BiasScoreThresholdCore/Edge=0.060/0.085`, `BiasScoreRegimeLowBoost=0.015`, `BiasSlopeConfirmH1/H4/D1=0.018/0.014/0.010`, `NeutralBiasRiskScale=0.40`, `RequireStrongFallbackSetups=true` |
+| Entries | `PullbackBodyATRMin=0.45`, `BreakoutImpulseATRMin=0.42`, `BreakoutRangeBars=6`, `Core/EdgeScoreThreshold=0.76/0.85`, `RegimeLow/HighQualityBoost=0.06/0.03`, `AllowAggressiveEntries=true` |
+| Management | `PartialTP1_Fraction=0.40`, `BreakEven_R=0.9`, `PartialTP1_R=1.1`, `HardTP_R=2.7`, `TrailStart_R=1.8`, `TrailDistance_R=0.9`, `MaxBarsInTrade=36`, `TimeStopProtectR=0.5` |
+| Discipline | `LateEntryCutoff=14:00`, `EnableFallbackEntry=true`, `EnableWeekdayFallback=true`, `MaxLosingTradesPerDay=3`, `MaxLosingTradesInARow=3`, `RiskScaleAfterLosingStreak=0.5` |
+| Telemetry | `EnableTradeTelemetry=true`, prefix `xau_balanced_v2` |
+
+The telemetry CSVs add per-trade lines with direction, entry type, realised R multiple, MFE/MAE (in R), bars held, and detected exit mechanism—ideal for post-run analytics without scraping the strategy tester report.
 
 ## Entry & Exit Map
 
