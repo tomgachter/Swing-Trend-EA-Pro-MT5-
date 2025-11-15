@@ -11,6 +11,16 @@ A swing-trend Expert Advisor for MetaTrader 5 that focuses on London-session mom
 - `src/modules/DailyGuard.mqh` & `src/modules/RiskEngine.mqh` – enforce prop-style daily loss caps, trade limits, and losing-streak scaling.
 - Additional modules provide regime detection, sizing utilities, and broker abstractions.
 
+### Standalone MetaTrader drop-in
+
+MetaTrader terminals expect every `#include` dependency to live next to the EA inside
+`MQL5/Experts`. To avoid "file not found" errors when copying only the main
+`XAU_Swing_TrendEA_Pro.mq5`, the repository now ships with an auto-generated,
+single-file build under `dist/XAU_Swing_TrendEA_Pro.mq5`. Run
+`python tools/bundle_ea.py` whenever you change the sources to refresh the bundle,
+then copy the resulting file into `MQL5/Experts`. The modular sources under `src/`
+remain the canonical editing location.
+
 ## Balanced XAU H1 v2 preset
 
 The default input values in `XAU_Swing_TrendEA_Pro.mq5` now ship as **Balanced XAU H1 v2**, a trend-following profile for XAUUSD on H1 with trading limited to 07:00–14:45 server time and a hard cut-off at 14:00.
