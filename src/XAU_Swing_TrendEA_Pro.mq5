@@ -23,58 +23,59 @@
 /*
  * --------------------------------------------------------------------
  * PUBLIC PARAMETER SUMMARY (10 inputs)
- * 1. RiskPerTradePercent   – percent of equity risked per trade.
- * 2. DailyLossCapPercent   – realised + open loss cap per day in percent.
- * 3. EquityDDKillPercent   – static equity drawdown kill switch in percent.
- * 4. SessionStartHour      – broker hour for session start (minutes fixed to 00).
- * 5. SessionEndHour        – broker hour for session end (minutes fixed to 45).
- * 6. QualityMode           – adjusts entry quality gates and fallback strictness.
- * 7. TrendFilterMode       – tunes slope thresholds and bias discipline.
- * 8. InitialSL_ATR_Multiple – ATR multiple for the initial protective stop.
- * 9. FinalTargetR          – R-multiple for the final profit target.
- *10. TimeStopBars          – bars before the time-stop pulls SL to +0.5 R.
+ * 1. RiskPerTradePercent      – percent of equity risked per trade.
+ * 2. MaxDailyLossPercent      – realised + open loss cap per day in percent.
+ * 3. MaxStaticDrawdownPercent – static equity drawdown kill switch in percent
+ *                               (<=0 disables the static kill switch for testing).
+ * 4. AllowLongs               – enable long trades.
+ * 5. AllowShorts              – enable short trades.
+ * 6. SessionStartHour         – broker hour for session start (minutes fixed to 00).
+ * 7. SessionEndHour           – broker hour for session end (minutes fixed to 45).
+ * 8. BiasMode                 – multi-timeframe bias discipline profile.
+ * 9. RRProfile                – exit / R-multiple management profile.
+ *10. EnableFallbackEntries    – allow relaxed/fallback entries outside the
+ *                               A-session core window.
  *
- * Drawdown kill switch: once EquityDDKillPercent is reached the RiskEngine closes all
- * open trades and latches the guard so no new orders are placed until the EA is
- * reloaded. This keeps the prop-firm style equity guard fully deterministic.
+ * BiasMode:
+ *  - BIAS_STRICT     enforces unanimous EMA slope alignment, raises slope/score
+ *                    thresholds and disables neutral-bias trades.
+ *  - BIAS_BALANCED   mirrors the legacy "Balanced v2" bias discipline with
+ *                    controlled neutral exposure and selective fallbacks.
+ *  - BIAS_AGGRESSIVE relaxes slope thresholds slightly and allows wider
+ *                    neutral-bias participation.
  *
- * QualityMode:
- *  - QUALITY_AGGRESSIVE lowers quality requirements and keeps win-streak risk boosts.
- *  - QUALITY_BALANCED mirrors the legacy xau_balanced_v2 behaviour.
- *  - QUALITY_CONSERVATIVE tightens quality gates and only allows fallback trades with
- *    a clear trend bias.
- *
- * TrendFilterMode:
- *  - TREND_OFF relaxes slope filters but still requires a resolved bias direction.
- *  - TREND_NORMAL keeps the original multi-timeframe slope thresholds.
- *  - TREND_STRICT raises slope requirements and blocks neutral/contradictory biases.
+ * RRProfile:
+ *  - RR_CONSERVATIVE uses a single 1.5R target with optional late time-stop.
+ *  - RR_BALANCED     (default) applies 50-60% partials near 1.1R, BE around 0.9R
+ *                    and trails from ~1.6R towards a 1.9R hard target.
+ *  - RR_RUNNER       leaves a runner beyond 1R with loose trailing and no hard TP.
  */
 
-enum ENUM_QualityMode
+enum ENUM_BiasMode
 {
-   QUALITY_AGGRESSIVE = 0,
-   QUALITY_BALANCED   = 1,
-   QUALITY_CONSERVATIVE = 2
+   BIAS_STRICT = 0,
+   BIAS_BALANCED = 1,
+   BIAS_AGGRESSIVE = 2
 };
 
-enum ENUM_TrendFilterMode
+enum ENUM_RRProfile
 {
-   TREND_OFF = 0,
-   TREND_NORMAL = 1,
-   TREND_STRICT = 2
+   RR_CONSERVATIVE = 0,
+   RR_BALANCED     = 1,
+   RR_RUNNER       = 2
 };
 
 // --- Public inputs --------------------------------------------------
-input double RiskPerTradePercent   = 0.5;   // % of equity per trade
-input double DailyLossCapPercent   = 5.0;   // realised + open loss cap per day in %
-input double EquityDDKillPercent   = 12.0;  // hard max equity DD in %
-input int    SessionStartHour      = 7;     // broker time, minutes fixed to 0
-input int    SessionEndHour        = 14;    // broker time, minutes fixed internally to 45
-input ENUM_QualityMode QualityMode = QUALITY_BALANCED;
-input ENUM_TrendFilterMode TrendFilterMode = TREND_NORMAL;
-input double InitialSL_ATR_Multiple = 1.2;
-input double FinalTargetR            = 2.5;
-input int    TimeStopBars            = 40;   // bars on the entry timeframe
+input double        RiskPerTradePercent      = 0.50;  // % of equity per trade
+input double        MaxDailyLossPercent      = 5.00;  // realised + open loss cap per day in %
+input double        MaxStaticDrawdownPercent = 12.00; // static equity DD kill switch (<=0 disables)
+input bool          AllowLongs               = true;  // enable long trades
+input bool          AllowShorts              = true;  // enable short trades
+input int           SessionStartHour         = 7;     // broker time, minutes fixed to 00
+input int           SessionEndHour           = 14;    // broker time, minutes fixed internally to 45
+input ENUM_BiasMode BiasMode                 = BIAS_BALANCED;
+input ENUM_RRProfile RRProfile               = RR_BALANCED;
+input bool          EnableFallbackEntries    = true;  // allow relaxed fallback entries
 
 // --- Internal constants ---------------------------------------------
 const ulong   MAGIC_NUMBER = 20241026;
@@ -98,9 +99,9 @@ const double  TIME_STOP_PROTECT_R_DEFAULT = 0.5;
 const double  FALLBACK_SLOPE_SCALE_BASE = 0.75;
 const double  FALLBACK_SCORE_DISCOUNT_BASE = 0.90;
 const string  TELEMETRY_FOLDER = "XAU_Swing_TrendEA_Pro";
-const string  TELEMETRY_PREFIX_BASE = "xau_balanced_v2";
+const string  TELEMETRY_PREFIX_BASE = "xau_bias_rr";
 
-// TODO: Backtest XAUUSD H1 2021-2025 (spread 20) with QUALITY_BALANCED and QUALITY_CONSERVATIVE.
+// TODO: Backtest XAUUSD H1 2021-2025 (spread 20) with BIAS_BALANCED/RR_BALANCED and BIAS_STRICT/RR_CONSERVATIVE.
 
 struct StrategyConfig
 {
@@ -151,6 +152,9 @@ struct StrategyConfig
    double trailStart_R;
    double trailDistance_R;
    double timeStopProtectR;
+   double finalTarget_R;
+   int    timeStopBars;
+   double initialStopATR;
    bool   useHardFinalTP;
    bool   useTimeStop;
    bool   useAdaptiveSL;
@@ -200,7 +204,7 @@ StrategyConfig MakeBalancedConfig()
    cfg.allowFallbackWhenBiasNeutral = true;
    cfg.fallbackSlopeScale = FALLBACK_SLOPE_SCALE_BASE;
    cfg.fallbackScoreDiscount = FALLBACK_SCORE_DISCOUNT_BASE;
-   cfg.neutralBiasRiskScale = 0.40;
+   cfg.neutralBiasRiskScale = 0.50;
    cfg.allowNeutralBiasOnEdge = true;
    cfg.regimeLowQualityBoost = 0.06;
    cfg.regimeHighQualityBoost = 0.03;
@@ -211,12 +215,15 @@ StrategyConfig MakeBalancedConfig()
    cfg.maxLosingTradesPerDay = 3;
    cfg.maxLosingTradesInARow = 3;
    cfg.riskScaleAfterLosingStreak = 0.50;
-   cfg.partialTPFraction = 0.40;
+   cfg.partialTPFraction = 0.55;
    cfg.breakEvenR = 0.90;
    cfg.partialTP_R = 1.10;
-   cfg.trailStart_R = 1.80;
-   cfg.trailDistance_R = 0.90;
+   cfg.trailStart_R = 1.60;
+   cfg.trailDistance_R = 0.85;
    cfg.timeStopProtectR = TIME_STOP_PROTECT_R_DEFAULT;
+   cfg.finalTarget_R = 1.90;
+   cfg.timeStopBars = 40;
+   cfg.initialStopATR = 1.20;
    cfg.useHardFinalTP = true;
    cfg.useTimeStop = true;
    cfg.useAdaptiveSL = true;
@@ -233,104 +240,149 @@ StrategyConfig MakeBalancedConfig()
    cfg.requireDirectionalBias = false;
    return cfg;
 }
-
-void ApplyQualityModeAdjustments(StrategyConfig &cfg,const ENUM_QualityMode mode)
+void ApplyBiasModeAdjustments(StrategyConfig &cfg,const ENUM_BiasMode mode,const bool fallbackEnabled)
 {
    switch(mode)
    {
-      case QUALITY_CONSERVATIVE:
-         cfg.coreQualityLong = MathMin(0.95,cfg.coreQualityLong + 0.05);
-         cfg.coreQualityShort = MathMin(0.95,cfg.coreQualityShort + 0.05);
-         cfg.edgeQualityLong = MathMin(0.95,cfg.edgeQualityLong + 0.05);
-         cfg.edgeQualityShort = MathMin(0.95,cfg.edgeQualityShort + 0.05);
-         cfg.requireTrendForFallback = true;
-         cfg.allowFallbackWhenBiasNeutral = false;
+      case BIAS_STRICT:
+         cfg.biasSlopeThH1 *= 1.25;
+         cfg.biasSlopeThH4 *= 1.25;
+         cfg.biasSlopeThD1 *= 1.25;
+         cfg.biasSlopeConfirmH1 *= 1.25;
+         cfg.biasSlopeConfirmH4 *= 1.25;
+         cfg.biasSlopeConfirmD1 *= 1.25;
+         cfg.biasScoreThresholdCore *= 1.20;
+         cfg.biasScoreThresholdEdge *= 1.25;
+         cfg.biasVotesRequired = 3;
          cfg.allowNeutralBiasOnEdge = false;
+         cfg.allowFallbackWhenBiasNeutral = false;
+         cfg.enableFallbackEntry = false;
+         cfg.enableWeekdayFallback = false;
+         cfg.requireTrendForFallback = true;
          cfg.allowAggressiveEntries = false;
+         cfg.disallowNeutralEntries = true;
+         cfg.requireDirectionalBias = true;
+         cfg.neutralBiasRiskScale = 0.0;
+         cfg.maxLosingTradesPerDay = 2;
+         cfg.maxLosingTradesInARow = 2;
+         cfg.useDynamicRisk = true;
          break;
-      case QUALITY_AGGRESSIVE:
-         // QUALITY_AGGRESSIVE keeps the win-streak risk boost and slightly lower quality gates.
-         cfg.coreQualityLong = MathMax(0.60,cfg.coreQualityLong - 0.02);
-         cfg.coreQualityShort = MathMax(0.60,cfg.coreQualityShort - 0.02);
-         cfg.edgeQualityLong = MathMax(0.60,cfg.edgeQualityLong - 0.02);
-         cfg.edgeQualityShort = MathMax(0.60,cfg.edgeQualityShort - 0.02);
+      case BIAS_AGGRESSIVE:
+         cfg.biasSlopeThH1 *= 0.80;
+         cfg.biasSlopeThH4 *= 0.80;
+         cfg.biasSlopeThD1 *= 0.80;
+         cfg.biasSlopeConfirmH1 *= 0.80;
+         cfg.biasSlopeConfirmH4 *= 0.80;
+         cfg.biasSlopeConfirmD1 *= 0.80;
+         cfg.biasScoreThresholdCore *= 0.85;
+         cfg.biasScoreThresholdEdge *= 0.80;
          cfg.allowAggressiveEntries = true;
          cfg.requireStrongFallback = false;
          cfg.allowFallbackWhenBiasNeutral = true;
+         cfg.neutralBiasRiskScale = 0.70;
+         cfg.useDynamicRisk = true;
+         cfg.enableFallbackEntry = fallbackEnabled;
+         cfg.enableWeekdayFallback = fallbackEnabled;
          break;
-      default:
+      default: // BIAS_BALANCED
+         cfg.enableFallbackEntry = fallbackEnabled;
+         cfg.enableWeekdayFallback = fallbackEnabled;
          cfg.allowAggressiveEntries = false;
+         cfg.requireTrendForFallback = false;
          cfg.allowFallbackWhenBiasNeutral = true;
-         break;
-   }
-}
-
-void ApplyTrendFilterAdjustments(StrategyConfig &cfg,const ENUM_TrendFilterMode mode)
-{
-   switch(mode)
-   {
-      case TREND_STRICT:
-         cfg.biasSlopeThH1 *= 1.35;
-         cfg.biasSlopeThH4 *= 1.35;
-         cfg.biasSlopeThD1 *= 1.35;
-         cfg.biasSlopeConfirmH1 *= 1.35;
-         cfg.biasSlopeConfirmH4 *= 1.35;
-         cfg.biasSlopeConfirmD1 *= 1.35;
-         cfg.biasScoreThresholdCore *= 1.35;
-         cfg.biasScoreThresholdEdge *= 1.35;
-         cfg.allowNeutralBiasOnEdge = false;
-         cfg.allowFallbackWhenBiasNeutral = false;
-         cfg.requireTrendForFallback = true;
-         cfg.disallowNeutralEntries = true;
-         cfg.requireDirectionalBias = true;
-         break;
-      case TREND_OFF:
-         cfg.biasSlopeThH1 *= 0.40;
-         cfg.biasSlopeThH4 *= 0.40;
-         cfg.biasSlopeThD1 *= 0.40;
-         cfg.biasSlopeConfirmH1 *= 0.40;
-         cfg.biasSlopeConfirmH4 *= 0.40;
-         cfg.biasSlopeConfirmD1 *= 0.40;
-         cfg.biasScoreThresholdCore = 0.0;
-         cfg.biasScoreThresholdEdge = 0.0;
-         cfg.bypassSlopeScoreCheck = true;
-         cfg.bypassSlopeVoteCheck = true;
-         cfg.requireDirectionalBias = true;
          cfg.disallowNeutralEntries = false;
+         cfg.requireDirectionalBias = false;
+         cfg.neutralBiasRiskScale = 0.50;
+         cfg.useDynamicRisk = true;
          break;
-      default:
+   }
+
+   if(mode!=BIAS_STRICT)
+   {
+      cfg.enableFallbackEntry = fallbackEnabled;
+   }
+}
+
+void ApplyRRProfileAdjustments(StrategyConfig &cfg,const ENUM_RRProfile profile)
+{
+   switch(profile)
+   {
+      case RR_CONSERVATIVE:
+         cfg.partialTPFraction = 0.0;
+         cfg.breakEvenR = 0.80;
+         cfg.partialTP_R = 1.50;
+         cfg.trailStart_R = 0.0;
+         cfg.trailDistance_R = 0.0;
+         cfg.finalTarget_R = 1.50;
+         cfg.timeStopBars = 60;
+         cfg.useHardFinalTP = true;
+         cfg.useTimeStop = true;
+         cfg.timeStopProtectR = 0.40;
+         cfg.useAdaptiveSL = false;
+         break;
+      case RR_RUNNER:
+         cfg.partialTPFraction = 0.35;
+         cfg.breakEvenR = 0.85;
+         cfg.partialTP_R = 1.00;
+         cfg.trailStart_R = 1.20;
+         cfg.trailDistance_R = 1.20;
+         cfg.finalTarget_R = 3.50;
+         cfg.timeStopBars = 70;
+         cfg.useHardFinalTP = false;
+         cfg.useTimeStop = true;
+         cfg.timeStopProtectR = 0.30;
+         cfg.useAdaptiveSL = true;
+         cfg.adaptiveAfterBars = 12;
+         cfg.adaptiveMultiplier = 1.3;
+         cfg.adaptiveMinProfitR = 0.6;
+         break;
+      default: // RR_BALANCED
+         cfg.partialTPFraction = 0.55;
+         cfg.breakEvenR = 0.90;
+         cfg.partialTP_R = 1.10;
+         cfg.trailStart_R = 1.60;
+         cfg.trailDistance_R = 0.85;
+         cfg.finalTarget_R = 1.90;
+         cfg.timeStopBars = 40;
+         cfg.useHardFinalTP = true;
+         cfg.useTimeStop = true;
+         cfg.timeStopProtectR = TIME_STOP_PROTECT_R_DEFAULT;
+         cfg.useAdaptiveSL = true;
+         cfg.adaptiveAfterBars = 10;
+         cfg.adaptiveMultiplier = 1.2;
+         cfg.adaptiveMinProfitR = 0.5;
          break;
    }
 }
 
-string QualityModeToString(const ENUM_QualityMode mode)
+string BiasModeToString(const ENUM_BiasMode mode)
 {
    switch(mode)
    {
-      case QUALITY_AGGRESSIVE:   return "QUALITY_AGGRESSIVE";
-      case QUALITY_CONSERVATIVE: return "QUALITY_CONSERVATIVE";
-      default:                   return "QUALITY_BALANCED";
+      case BIAS_STRICT:     return "BIAS_STRICT";
+      case BIAS_AGGRESSIVE: return "BIAS_AGGRESSIVE";
+      default:              return "BIAS_BALANCED";
    }
 }
 
-string TrendFilterModeToString(const ENUM_TrendFilterMode mode)
+string RRProfileToString(const ENUM_RRProfile profile)
 {
-   switch(mode)
+   switch(profile)
    {
-      case TREND_OFF:    return "TREND_OFF";
-      case TREND_STRICT: return "TREND_STRICT";
-      default:           return "TREND_NORMAL";
+      case RR_CONSERVATIVE: return "RR_CONSERVATIVE";
+      case RR_RUNNER:       return "RR_RUNNER";
+      default:              return "RR_BALANCED";
    }
 }
 
-string ComposeTelemetryPrefix(const ENUM_QualityMode quality,const ENUM_TrendFilterMode trend)
+string ComposeTelemetryPrefix(const ENUM_BiasMode bias,const ENUM_RRProfile profile)
 {
-   return TELEMETRY_PREFIX_BASE + "_" + QualityModeToString(quality) + "_" + TrendFilterModeToString(trend);
+   return TELEMETRY_PREFIX_BASE + "_" + BiasModeToString(bias) + "_" + RRProfileToString(profile);
 }
 
 StrategyConfig gConfig;
-string         gQualityLabel = "";
-string         gTrendLabel = "";
+string         gBiasLabel = "";
+string         gRRLabel   = "";
 
 //--- globals
 BrokerUtils   gBroker;
@@ -377,10 +429,17 @@ bool RecentPnLPositive();
 int OnInit()
 {
    gConfig = MakeBalancedConfig();
-   ApplyQualityModeAdjustments(gConfig,QualityMode);
-   ApplyTrendFilterAdjustments(gConfig,TrendFilterMode);
-   gQualityLabel = QualityModeToString(QualityMode);
-   gTrendLabel = TrendFilterModeToString(TrendFilterMode);
+   ApplyBiasModeAdjustments(gConfig,BiasMode,EnableFallbackEntries);
+   ApplyRRProfileAdjustments(gConfig,RRProfile);
+   gConfig.allowLongs = AllowLongs;
+   gConfig.allowShorts = AllowShorts;
+   if(!EnableFallbackEntries)
+   {
+      gConfig.enableFallbackEntry = false;
+      gConfig.enableWeekdayFallback = false;
+   }
+   gBiasLabel = BiasModeToString(BiasMode);
+   gRRLabel = RRProfileToString(RRProfile);
 
    gVerboseDecisionLog = (DEBUG_MODE || FORCE_VERBOSE_LOG);
    gBroker.Configure(MAGIC_NUMBER,TRADE_COMMENT,20);
@@ -389,7 +448,7 @@ int OnInit()
 
    gEntry.Configure(RANDOMIZE_ENTRY_EXIT);
    gEntry.ConfigureSensitivity(gConfig.pullbackBodyAtrMin,gConfig.breakoutImpulseAtrMin,gConfig.breakoutRangeBars);
-   gEntry.SetStopMultiplier(InitialSL_ATR_Multiple);
+   gEntry.SetStopMultiplier(gConfig.initialStopATR);
    gEntry.SetQualityThresholds(gConfig.coreQualityLong,gConfig.coreQualityShort,
                                gConfig.edgeQualityLong,gConfig.edgeQualityShort,
                                gConfig.allowAggressiveEntries,AGGRESSIVE_DISCOUNT,AGGRESSIVE_FLOOR);
@@ -399,32 +458,36 @@ int OnInit()
                                      gConfig.regimeLowRiskScale,gConfig.regimeHighRiskScale);
    gEntry.SetFallbackPolicy(gConfig.requireStrongFallback);
 
-   gExit.ConfigureRManagement(gConfig.partialTPFraction,gConfig.breakEvenR,gConfig.partialTP_R,FinalTargetR,
+   gExit.ConfigureRManagement(gConfig.partialTPFraction,gConfig.breakEvenR,gConfig.partialTP_R,gConfig.finalTarget_R,
                               gConfig.trailStart_R,gConfig.trailDistance_R,
-                              gConfig.useHardFinalTP,gConfig.useTimeStop,TimeStopBars,gConfig.timeStopProtectR);
+                              gConfig.useHardFinalTP,gConfig.useTimeStop,gConfig.timeStopBars,gConfig.timeStopProtectR);
    gExit.ConfigureAdaptiveSL(gConfig.useAdaptiveSL,gConfig.adaptiveAfterBars,gConfig.adaptiveMultiplier,gConfig.adaptiveMinProfitR);
    gExit.SetEntryTimeframe(ENTRY_TIMEFRAME);
    gExit.SetVerbose(gVerboseDecisionLog);
-   string telemetryPrefix = ComposeTelemetryPrefix(QualityMode,TrendFilterMode);
+   string telemetryPrefix = ComposeTelemetryPrefix(BiasMode,RRProfile);
    gExit.ConfigureTelemetry(ENABLE_TRADE_TELEMETRY,TELEMETRY_FOLDER,telemetryPrefix);
 
    string headerNames[10];
    string headerValues[10];
-   headerNames[0] = "RiskPerTradePercent";   headerValues[0] = DoubleToString(RiskPerTradePercent,2);
-   headerNames[1] = "DailyLossCapPercent";   headerValues[1] = DoubleToString(DailyLossCapPercent,2);
-   headerNames[2] = "EquityDDKillPercent";   headerValues[2] = DoubleToString(EquityDDKillPercent,2);
-   headerNames[3] = "SessionStartHour";      headerValues[3] = IntegerToString(SessionStartHour);
-   headerNames[4] = "SessionEndHour";        headerValues[4] = IntegerToString(SessionEndHour);
-   headerNames[5] = "QualityMode";           headerValues[5] = gQualityLabel;
-   headerNames[6] = "TrendFilterMode";       headerValues[6] = gTrendLabel;
-   headerNames[7] = "InitialSL_ATR_Multiple";headerValues[7] = DoubleToString(InitialSL_ATR_Multiple,2);
-   headerNames[8] = "FinalTargetR";          headerValues[8] = DoubleToString(FinalTargetR,2);
-   headerNames[9] = "TimeStopBars";          headerValues[9] = IntegerToString(TimeStopBars);
-   gExit.SetTelemetryConfigSnapshot(gQualityLabel,gTrendLabel,headerNames,headerValues,10);
+   headerNames[0] = "RiskPerTradePercent";      headerValues[0] = DoubleToString(RiskPerTradePercent,2);
+   headerNames[1] = "MaxDailyLossPercent";     headerValues[1] = DoubleToString(MaxDailyLossPercent,2);
+   headerNames[2] = "MaxStaticDrawdownPercent";headerValues[2] = DoubleToString(MaxStaticDrawdownPercent,2);
+   headerNames[3] = "AllowLongs";              headerValues[3] = (AllowLongs?"true":"false");
+   headerNames[4] = "AllowShorts";             headerValues[4] = (AllowShorts?"true":"false");
+   headerNames[5] = "SessionStartHour";        headerValues[5] = IntegerToString(SessionStartHour);
+   headerNames[6] = "SessionEndHour";          headerValues[6] = IntegerToString(SessionEndHour);
+   headerNames[7] = "BiasMode";                headerValues[7] = gBiasLabel;
+   headerNames[8] = "RRProfile";               headerValues[8] = gRRLabel;
+   headerNames[9] = "EnableFallbackEntries";   headerValues[9] = (EnableFallbackEntries?"true":"false");
+   gExit.SetTelemetryConfigSnapshot(gBiasLabel,gRRLabel,headerNames,headerValues,10);
 
    string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MAGIC_NUMBER);
-   gRisk.Configure(RISK_PERCENT_PER_TRADE,RiskPerTradePercent,DailyLossCapPercent,EquityDDKillPercent,
-                   PROP_DAY_START_HOUR,persistKey,USE_STATIC_OVERALL_DD,(double)SLIPPAGE_BUDGET_POINTS);
+   double ddPercent = (MaxStaticDrawdownPercent>0.0 ? MaxStaticDrawdownPercent : 0.0);
+   bool useStaticDD = (MaxStaticDrawdownPercent>0.0 && USE_STATIC_OVERALL_DD);
+   // RiskEngine uses the day-anchor equity for daily caps and the recorded initial equity for
+   // the static drawdown guard so that all percent checks reference a consistent capital base.
+   gRisk.Configure(RISK_PERCENT_PER_TRADE,RiskPerTradePercent,MaxDailyLossPercent,ddPercent,
+                   PROP_DAY_START_HOUR,persistKey,useStaticDD,(double)SLIPPAGE_BUDGET_POINTS);
    gRisk.SetDebugMode(DEBUG_MODE);
    gRisk.SetVerboseMode(gVerboseDecisionLog);
    gRisk.SetDynamicRiskEnabled(gConfig.useDynamicRisk);
@@ -504,10 +567,10 @@ void OnTick()
    if(gRisk.KillSwitchLatched())
       return;
 
-   // EquityDDKillPercent guard: flatten and latch until the EA is restarted.
+   // MaxStaticDrawdownPercent guard: flatten and latch until the EA is restarted.
    if(gRisk.EquityKillSwitchTriggered())
    {
-      PrintFormat("Equity drawdown kill switch triggered (EquityDDKillPercent=%.2f%%)",EquityDDKillPercent);
+      PrintFormat("Equity drawdown kill switch triggered (MaxStaticDrawdownPercent=%.2f%%)",MaxStaticDrawdownPercent);
       CloseAllPositions();
       return;
    }
@@ -570,6 +633,22 @@ void EvaluateNewBar()
          Print("ENTRY TRACE: neutral bias blocked by mode configuration");
       return;
    }
+   if(BiasMode==BIAS_STRICT)
+   {
+      if(bias.direction==0)
+      {
+         if(gVerboseDecisionLog)
+            Print("ENTRY TRACE: strict bias mode requires resolved direction");
+         return;
+      }
+      int strictDir = (bias.direction>0 ? 1 : -1);
+      if(bias.signH1!=strictDir || bias.signH4!=strictDir || bias.signD1!=strictDir)
+      {
+         if(gVerboseDecisionLog)
+            Print("ENTRY TRACE: strict bias mode requires all slopes aligned");
+         return;
+      }
+   }
    if(useFallback && gConfig.requireTrendForFallback && (bias.strength==BIAS_NEUTRAL || bias.direction==0))
    {
       if(gVerboseDecisionLog)
@@ -591,6 +670,13 @@ void EvaluateNewBar()
          PrintFormat("ENTRY DEBUG: Session filter blocked entry at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
       else if(gVerboseDecisionLog)
          PrintFormat("ENTRY TRACE: Session filter blocked entry at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
+      return;
+   }
+
+   if(!gConfig.enableFallbackEntry && window!=SESSION_CORE)
+   {
+      if(gVerboseDecisionLog)
+         Print("ENTRY TRACE: fallback disabled -> only core session trades allowed");
       return;
    }
 
@@ -815,7 +901,7 @@ void AttemptEntry(const EntrySignal &signal)
    double tp = 0.0;
    if(gConfig.useHardFinalTP)
    {
-      tp = signal.entryPrice + signal.direction*FinalTargetR*stopPoints*point;
+      tp = signal.entryPrice + signal.direction*gConfig.finalTarget_R*stopPoints*point;
    }
    if(!gBroker.OpenPosition(signal.direction,volume,signal.entryPrice,signal.stopLoss,tp))
    {
