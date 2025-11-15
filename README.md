@@ -4,7 +4,7 @@ A swing-trend Expert Advisor for MetaTrader 5 that focuses on London-session mom
 
 ## Project layout
 
-- `src/XAU_Swing_TrendEA_Pro.mq5` – main Expert Advisor wiring inputs, preset defaults, and orchestration logic.
+- `src/XAU_Swing_TrendEA_Pro.mq5` – main (and only) Expert Advisor wiring inputs, preset defaults, and orchestration logic.
 - `src/modules/BiasEngine.mqh` – computes TrendBias with Strong/Moderate/Neutral classification using ATR-normalised EMA slopes and detailed logging.
 - `src/modules/EntryEngine.mqh` – evaluates pullback/breakout opportunities, assigns quality scores, and enforces session/fallback rules.
 - `src/modules/ExitEngine.mqh` – handles R-multiple management (partials, break-even, trailing, time-stop) and trade state tracking.
