@@ -76,6 +76,14 @@ input int           SessionEndHour           = 14;    // broker time, minutes fi
 input ENUM_BiasMode BiasMode                 = BIAS_BALANCED;
 input ENUM_RRProfile RRProfile               = RR_BALANCED;
 input bool          EnableFallbackEntries    = true;  // allow relaxed fallback entries
+input bool          AllowMondayTrading       = false; // disable Monday trades (largest weekly loss in tests)
+input bool          AllowTuesdayTrading      = true;  // keep Tuesday active by default
+input bool          AllowWednesdayTrading    = true;  // Wednesday carried most gains historically
+input bool          AllowThursdayTrading     = true;  // Thursday marginal but still allowed
+input bool          AllowFridayTrading       = false; // disable Friday entries (2nd worst weekday)
+input bool          RestrictEntryHours       = true;  // enforce intraday hour whitelist
+input int           AllowedEntryHourStart    = 9;     // inclusive start hour (broker time)
+input int           AllowedEntryHourEnd      = 12;    // inclusive end hour (broker time)
 
 // --- Internal constants ---------------------------------------------
 const ulong   MAGIC_NUMBER = 20241026;
@@ -187,9 +195,9 @@ StrategyConfig MakeBalancedConfig()
    cfg.biasScoreThresholdEdge = 0.085;
    cfg.biasScoreRegimeLowBoost = 0.015;
    cfg.biasScoreRegimeHighBoost = 0.005;
-   cfg.coreQualityLong = 0.76;
+   cfg.coreQualityLong = 0.82;
    cfg.coreQualityShort = 0.76;
-   cfg.edgeQualityLong = 0.85;
+   cfg.edgeQualityLong = 0.90;
    cfg.edgeQualityShort = 0.85;
    cfg.pullbackBodyAtrMin = 0.45;
    cfg.breakoutImpulseAtrMin = 0.42;
@@ -219,13 +227,13 @@ StrategyConfig MakeBalancedConfig()
    cfg.maxLosingTradesInARow = 3;
    cfg.riskScaleAfterLosingStreak = 0.50;
    cfg.partialTPFraction = 0.55;
-   cfg.breakEvenR = 0.90;
-   cfg.partialTP_R = 1.10;
-   cfg.trailStart_R = 1.60;
-   cfg.trailDistance_R = 0.85;
+   cfg.breakEvenR = 0.85;
+   cfg.partialTP_R = 1.05;
+   cfg.trailStart_R = 1.45;
+   cfg.trailDistance_R = 0.80;
    cfg.timeStopProtectR = TIME_STOP_PROTECT_R_DEFAULT;
-   cfg.finalTarget_R = 1.90;
-   cfg.timeStopBars = 40;
+   cfg.finalTarget_R = 1.75;
+   cfg.timeStopBars = 36;
    cfg.initialStopATR = 1.20;
    cfg.useHardFinalTP = true;
    cfg.useTimeStop = true;
@@ -408,6 +416,9 @@ bool          gVerboseDecisionLog = false;
 #define      RECENT_TRADE_WINDOW 10
 double        gRecentTradePnL[RECENT_TRADE_WINDOW];
 int           gRecentTradeCount = 0;
+bool          gUseHourWhitelist = false;
+int           gHourFilterStart = 0;
+int           gHourFilterEnd = 0;
 
 //--- helper declarations
 bool IsNewBar();
@@ -427,6 +438,8 @@ bool ShouldUseFallbackEntry(const datetime signalTime,const int recentEntries);
 void ResetRecentPnL();
 void RecordClosedTradePnL(const double profit);
 bool RecentPnLPositive();
+bool IsWeekdayAllowed(const int dayOfWeek);
+bool EntryHourAllowed(const int hour);
 
 
 //+------------------------------------------------------------------+
@@ -451,6 +464,9 @@ int OnInit()
    gBroker.Configure(MAGIC_NUMBER,TRADE_COMMENT,20);
    gSession.Configure(SessionStartHour,SESSION_START_MINUTE,SessionEndHour,gConfig.sessionEndMinute);
    gSession.SetDebugMode(DEBUG_MODE,false);
+   gUseHourWhitelist = RestrictEntryHours;
+   gHourFilterStart = MathMax(0,MathMin(23,AllowedEntryHourStart));
+   gHourFilterEnd = MathMax(0,MathMin(23,AllowedEntryHourEnd));
 
    gEntry.Configure(RANDOMIZE_ENTRY_EXIT);
    gEntry.ConfigureSensitivity(gConfig.pullbackBodyAtrMin,gConfig.breakoutImpulseAtrMin,gConfig.breakoutRangeBars);
@@ -679,6 +695,27 @@ void EvaluateNewBar()
       return;
    }
 
+   MqlDateTime entryDt;
+   TimeToStruct(signalTime,entryDt);
+   if(!IsWeekdayAllowed(entryDt.day_of_week))
+   {
+      if(gVerboseDecisionLog)
+      {
+         PrintFormat("ENTRY TRACE: weekday %d blocked by filter",entryDt.day_of_week);
+      }
+      return;
+   }
+   if(!EntryHourAllowed(entryDt.hour))
+   {
+      if(gVerboseDecisionLog)
+      {
+         PrintFormat("ENTRY TRACE: hour %02d blocked by whitelist %02d-%02d (wrap=%s)",
+                     entryDt.hour,gHourFilterStart,gHourFilterEnd,
+                     (gHourFilterStart>gHourFilterEnd)?"true":"false");
+      }
+      return;
+   }
+
    if(!gConfig.enableFallbackEntry && window!=SESSION_CORE)
    {
       if(gVerboseDecisionLog)
@@ -689,14 +726,12 @@ void EvaluateNewBar()
    if(gConfig.lateEntryCutoffHour>=0)
    {
       int cutoff = MathMax(0,MathMin(23*60+59,gConfig.lateEntryCutoffHour*60 + gConfig.lateEntryCutoffMinute));
-      MqlDateTime dt;
-      TimeToStruct(signalTime,dt);
-      int minutesNow = dt.hour*60 + dt.min;
+      int minutesNow = entryDt.hour*60 + entryDt.min;
       if(minutesNow>cutoff)
       {
          if(gVerboseDecisionLog)
          {
-            PrintFormat("ENTRY TRACE: late cutoff %02d:%02d exceeded at %02d:%02d",cutoff/60,cutoff%60,dt.hour,dt.min);
+            PrintFormat("ENTRY TRACE: late cutoff %02d:%02d exceeded at %02d:%02d",cutoff/60,cutoff%60,entryDt.hour,entryDt.min);
          }
          return;
       }
@@ -1089,6 +1124,31 @@ bool RecentPnLPositive()
    for(int i=0;i<gRecentTradeCount;i++)
       sum += gRecentTradePnL[i];
    return (gRecentTradeCount>0 && sum>0.0);
+}
+
+bool IsWeekdayAllowed(const int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return AllowMondayTrading;
+      case 2: return AllowTuesdayTrading;
+      case 3: return AllowWednesdayTrading;
+      case 4: return AllowThursdayTrading;
+      case 5: return AllowFridayTrading;
+      default: return false;
+   }
+}
+
+bool EntryHourAllowed(const int hour)
+{
+   if(!gUseHourWhitelist)
+      return true;
+   int clampedHour = MathMax(0,MathMin(23,hour));
+   if(gHourFilterStart==gHourFilterEnd)
+      return (clampedHour==gHourFilterStart);
+   if(gHourFilterStart<gHourFilterEnd)
+      return (clampedHour>=gHourFilterStart && clampedHour<=gHourFilterEnd);
+   return (clampedHour>=gHourFilterStart || clampedHour<=gHourFilterEnd);
 }
 
 //+------------------------------------------------------------------+
