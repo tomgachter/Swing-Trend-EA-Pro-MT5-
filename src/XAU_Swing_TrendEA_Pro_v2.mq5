@@ -22,19 +22,24 @@
 
 /*
  * --------------------------------------------------------------------
- * PUBLIC PARAMETER SUMMARY (10 inputs)
- * 1. RiskPerTradePercent      – percent of equity risked per trade.
- * 2. MaxDailyLossPercent      – realised + open loss cap per day in percent.
- * 3. MaxStaticDrawdownPercent – static equity drawdown kill switch in percent
- *                               (<=0 disables the static kill switch for testing).
- * 4. AllowLongs               – enable long trades.
- * 5. AllowShorts              – enable short trades.
- * 6. SessionStartHour         – broker hour for session start (minutes fixed to 00).
- * 7. SessionEndHour           – broker hour for session end (minutes fixed to 45).
- * 8. BiasMode                 – multi-timeframe bias discipline profile.
- * 9. RRProfile                – exit / R-multiple management profile.
- *10. EnableFallbackEntries    – allow relaxed/fallback entries outside the
- *                               A-session core window.
+ * PUBLIC PARAMETER SUMMARY (16 inputs)
+ *  1. RiskPerTradePercent       – percent of equity risked per trade.
+ *  2. MaxDailyLossPercent       – realised + open loss cap per day in percent.
+ *  3. MaxStaticDrawdownPercent  – static equity drawdown kill switch in percent
+ *                                 (<=0 disables the static kill switch for testing).
+ *  4. AllowLongs                – enable long trades.
+ *  5. AllowShorts               – enable short trades.
+ *  6. SessionStartHour          – broker hour for session start (minutes fixed to 00).
+ *  7. SessionEndHour            – broker hour for session end (minutes fixed internally to 45).
+ *  8. AllowedEntryHours         – optional comma separated hour list overriding the session window.
+ *  9. BiasMode                  – multi-timeframe bias discipline profile.
+ * 10. RRProfile                 – exit / R-multiple management profile.
+ * 11. StrictSlopeMultiplier     – slope multiplier for Bias STRICT mode.
+ * 12. BalancedSlopeMultiplier   – slope multiplier for Bias BALANCED mode.
+ * 13. AggressiveSlopeMultiplier – slope multiplier for Bias AGGRESSIVE mode.
+ * 14. FallbackRiskFactor        – multiplier applied to position size for fallback entries.
+ * 15. EnableFallbackEntries     – allow relaxed/fallback entries outside the A-session core window.
+ * 16. EnableCsvLogging          – write extended CSV telemetry (optional).
  *
  * BiasMode:
  *  - BIAS_STRICT     enforces unanimous EMA slope alignment, raises slope/score
@@ -69,15 +74,8 @@ enum ENUM_RRProfile
 input double        RiskPerTradePercent      = 0.35;  // % of equity per trade (net of stop distance)
 input double        MaxDailyLossPercent      = 5.00;  // realised + open loss cap per day in %
 input double        MaxStaticDrawdownPercent = 10.00; // static equity DD kill switch (<=0 disables)
-input int           MaxOpenPositions         = 2;     // simultaneous positions cap
-input int           MaxTradesPerDay          = 3;     // trades per calendar day cap (0 = unlimited)
 input bool          AllowLongs               = true;  // enable long trades
 input bool          AllowShorts              = true;  // enable short trades
-input bool          AllowMonday              = false; // weekday filters (broker time)
-input bool          AllowTuesday             = true;
-input bool          AllowWednesday           = true;
-input bool          AllowThursday            = true;
-input bool          AllowFriday              = true;
 input int           SessionStartHour         = 7;     // broker time, minutes fixed to 00
 input int           SessionEndHour           = 14;    // broker time, minutes fixed internally to 45
 input string        AllowedEntryHours        = "8,9,10,11,12"; // comma separated broker hours
@@ -90,6 +88,14 @@ input double        FallbackRiskFactor       = 0.60;  // multiplier for fallback
 input bool          EnableFallbackEntries    = false; // allow relaxed fallback entries
 input bool          EnableCsvLogging         = false; // write extended CSV trade logs
 
+// --- Extended safety/session inputs --------------------------------
+input int           MaxTradesPerDay          = 3;     // trades per calendar day cap (0 = unlimited)
+input bool          AllowMonday              = false; // weekday filters (broker time)
+input bool          AllowTuesday             = true;
+input bool          AllowWednesday           = true;
+input bool          AllowThursday            = true;
+input bool          AllowFriday              = true;
+
 // --- Internal constants ---------------------------------------------
 const ulong   MAGIC_NUMBER = 20241026;
 const string  TRADE_COMMENT = "XAU_Swing_TrendEA_Pro";
@@ -100,6 +106,7 @@ const bool    ENABLE_CHART_ANNOTATIONS = true;
 const bool    ENABLE_TRADE_TELEMETRY = true;
 const int     SLIPPAGE_BUDGET_POINTS = 80;
 const int     MAX_SPREAD_POINTS = 200;
+const int     MAX_OPEN_POSITIONS = 2;
 const int     PROP_DAY_START_HOUR = 0;
 const bool    USE_STATIC_OVERALL_DD = true;
 const ENUM_TIMEFRAMES ENTRY_TIMEFRAME = PERIOD_H1;
@@ -571,29 +578,32 @@ int OnInit()
    string telemetryPrefix = ComposeTelemetryPrefix(BiasMode,RRProfile);
    gExit.ConfigureTelemetry(EnableCsvLogging,TELEMETRY_FOLDER,telemetryPrefix);
 
-   string headerNames[20];
-   string headerValues[20];
-   headerNames[0]  = "RiskPerTradePercent";      headerValues[0]  = DoubleToString(RiskPerTradePercent,2);
-   headerNames[1]  = "MaxDailyLossPercent";     headerValues[1]  = DoubleToString(MaxDailyLossPercent,2);
-   headerNames[2]  = "MaxStaticDrawdownPercent";headerValues[2]  = DoubleToString(MaxStaticDrawdownPercent,2);
-   headerNames[3]  = "MaxOpenPositions";        headerValues[3]  = IntegerToString(MaxOpenPositions);
-   headerNames[4]  = "MaxTradesPerDay";         headerValues[4]  = IntegerToString(MaxTradesPerDay);
-   headerNames[5]  = "AllowLongs";              headerValues[5]  = (AllowLongs?"true":"false");
-   headerNames[6]  = "AllowShorts";             headerValues[6]  = (AllowShorts?"true":"false");
-   headerNames[7]  = "AllowMonday";             headerValues[7]  = (AllowMonday?"true":"false");
-   headerNames[8]  = "AllowTuesday";            headerValues[8]  = (AllowTuesday?"true":"false");
-   headerNames[9]  = "AllowWednesday";          headerValues[9]  = (AllowWednesday?"true":"false");
-   headerNames[10] = "AllowThursday";           headerValues[10] = (AllowThursday?"true":"false");
-   headerNames[11] = "AllowFriday";             headerValues[11] = (AllowFriday?"true":"false");
-   headerNames[12] = "SessionStartHour";        headerValues[12] = IntegerToString(SessionStartHour);
-   headerNames[13] = "SessionEndHour";          headerValues[13] = IntegerToString(SessionEndHour);
-   headerNames[14] = "AllowedEntryHours";       headerValues[14] = AllowedEntryHours;
-   headerNames[15] = "BiasMode";                headerValues[15] = gBiasLabel;
-   headerNames[16] = "RRProfile";               headerValues[16] = gRRLabel;
-   headerNames[17] = "EnableFallbackEntries";   headerValues[17] = (EnableFallbackEntries?"true":"false");
-   headerNames[18] = "FallbackRiskFactor";      headerValues[18] = DoubleToString(FallbackRiskFactor,2);
-   headerNames[19] = "EnableCsvLogging";        headerValues[19] = (EnableCsvLogging?"true":"false");
-   gExit.SetTelemetryConfigSnapshot(gBiasLabel,gRRLabel,headerNames,headerValues,20);
+   string headerNames[24];
+   string headerValues[24];
+   int headerCount = 0;
+   headerNames[headerCount] = "RiskPerTradePercent";      headerValues[headerCount++] = DoubleToString(RiskPerTradePercent,2);
+   headerNames[headerCount] = "MaxDailyLossPercent";     headerValues[headerCount++] = DoubleToString(MaxDailyLossPercent,2);
+   headerNames[headerCount] = "MaxStaticDrawdownPercent";headerValues[headerCount++] = DoubleToString(MaxStaticDrawdownPercent,2);
+   headerNames[headerCount] = "AllowLongs";              headerValues[headerCount++] = (AllowLongs?"true":"false");
+   headerNames[headerCount] = "AllowShorts";             headerValues[headerCount++] = (AllowShorts?"true":"false");
+   headerNames[headerCount] = "SessionStartHour";        headerValues[headerCount++] = IntegerToString(SessionStartHour);
+   headerNames[headerCount] = "SessionEndHour";          headerValues[headerCount++] = IntegerToString(SessionEndHour);
+   headerNames[headerCount] = "AllowedEntryHours";       headerValues[headerCount++] = AllowedEntryHours;
+   headerNames[headerCount] = "BiasMode";                headerValues[headerCount++] = gBiasLabel;
+   headerNames[headerCount] = "RRProfile";               headerValues[headerCount++] = gRRLabel;
+   headerNames[headerCount] = "StrictSlopeMultiplier";   headerValues[headerCount++] = DoubleToString(StrictSlopeMultiplier,2);
+   headerNames[headerCount] = "BalancedSlopeMultiplier"; headerValues[headerCount++] = DoubleToString(BalancedSlopeMultiplier,2);
+   headerNames[headerCount] = "AggressiveSlopeMultiplier";headerValues[headerCount++] = DoubleToString(AggressiveSlopeMultiplier,2);
+   headerNames[headerCount] = "FallbackRiskFactor";      headerValues[headerCount++] = DoubleToString(FallbackRiskFactor,2);
+   headerNames[headerCount] = "EnableFallbackEntries";   headerValues[headerCount++] = (EnableFallbackEntries?"true":"false");
+   headerNames[headerCount] = "EnableCsvLogging";        headerValues[headerCount++] = (EnableCsvLogging?"true":"false");
+   headerNames[headerCount] = "MaxTradesPerDay";         headerValues[headerCount++] = IntegerToString(MaxTradesPerDay);
+   headerNames[headerCount] = "AllowMonday";             headerValues[headerCount++] = (AllowMonday?"true":"false");
+   headerNames[headerCount] = "AllowTuesday";            headerValues[headerCount++] = (AllowTuesday?"true":"false");
+   headerNames[headerCount] = "AllowWednesday";          headerValues[headerCount++] = (AllowWednesday?"true":"false");
+   headerNames[headerCount] = "AllowThursday";           headerValues[headerCount++] = (AllowThursday?"true":"false");
+   headerNames[headerCount] = "AllowFriday";             headerValues[headerCount++] = (AllowFriday?"true":"false");
+   gExit.SetTelemetryConfigSnapshot(gBiasLabel,gRRLabel,headerNames,headerValues,headerCount);
 
    string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MAGIC_NUMBER);
    double ddPercent = (MaxStaticDrawdownPercent>0.0 ? MaxStaticDrawdownPercent : 0.0);
@@ -981,11 +991,11 @@ void AttemptEntry(const EntrySignal &signal)
                   signal.riskScale,signal.fallbackRelaxed?"true":"false");
    }
 
-   if(MaxOpenPositions>0 && CountStrategyPositions() >= MaxOpenPositions)
+   if(MAX_OPEN_POSITIONS>0 && CountStrategyPositions() >= MAX_OPEN_POSITIONS)
    {
       AnnotateChart("Max open positions reached",clrSilver);
       if(gVerboseDecisionLog)
-         PrintFormat("ENTRY TRACE: MaxOpenPositions=%d reached",MaxOpenPositions);
+         PrintFormat("ENTRY TRACE: MaxOpenPositions=%d reached",MAX_OPEN_POSITIONS);
       return;
    }
 
