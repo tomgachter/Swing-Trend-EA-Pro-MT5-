@@ -466,6 +466,25 @@ void OnDeinit(const int reason)
    gRegime.Release();
 }
 
+bool IsNewBar()
+{
+   datetime currentBarTime = iTime(_Symbol,ENTRY_TIMEFRAME,0);
+   if(currentBarTime<=0)
+      return false;
+
+   if(currentBarTime==gLastBarTime)
+      return false;
+
+   if(gLastBarTime>currentBarTime)
+   {
+      gLastBarTime = currentBarTime;
+      return false;
+   }
+
+   gLastBarTime = currentBarTime;
+   return true;
+}
+
 //+------------------------------------------------------------------+
 //| OnTick                                                           |
 //+------------------------------------------------------------------+
