@@ -133,6 +133,7 @@ private:
    double m_lowRegimeRiskScale;
    double m_highRegimeRiskScale;
    bool   m_requireStrongFallback;
+   double m_fallbackRiskScale;
 
    double BaseQualityFor(const SessionWindow session,const int direction,const bool fallbackMode) const
    {
@@ -396,7 +397,7 @@ public:
                   m_allowLongs(true), m_allowShorts(true),
                   m_qualityBoostLowRegime(0.05), m_qualityBoostHighRegime(0.02),
                   m_lowRegimeRiskScale(0.75), m_highRegimeRiskScale(1.0),
-                  m_requireStrongFallback(true)
+                  m_requireStrongFallback(true), m_fallbackRiskScale(1.0)
    {
    }
 
@@ -463,9 +464,15 @@ public:
       m_highRegimeRiskScale = MathMax(0.2,MathMin(1.2,highScale));
    }
 
-   void SetFallbackPolicy(const bool requireStrongSetups)
+   void SetFallbackPolicy(const bool requireStrongSetups,const double fallbackRiskScale)
    {
       m_requireStrongFallback = requireStrongSetups;
+      double scale = fallbackRiskScale;
+      if(scale<=0.0)
+         scale = 0.0;
+      if(scale>1.0)
+         scale = 1.0;
+      m_fallbackRiskScale = scale;
    }
 
    bool Evaluate(const TrendBias &bias,RegimeFilter &regime,const SessionWindow session,MqlRates &bars[],const int count,
@@ -665,6 +672,15 @@ public:
          if(verbose)
             Print("ENTRY TRACE: fallback mode requires strong setup -> rejecting");
          return false;
+      }
+
+      if(fallbackMode && m_fallbackRiskScale>0.0 && m_fallbackRiskScale<1.0)
+      {
+         signal.riskScale *= m_fallbackRiskScale;
+         if(verbose)
+         {
+            PrintFormat("ENTRY TRACE: fallback risk scale applied -> %.2f",signal.riskScale);
+         }
       }
 
       signal.valid = true;
