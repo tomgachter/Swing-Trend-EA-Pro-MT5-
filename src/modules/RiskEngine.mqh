@@ -151,6 +151,8 @@ public:
 
    bool EquityKillSwitchTriggered()
    {
+      if(m_maxEquityDDPercent<=0.0)
+         return false;
       double equity = AccountInfoDouble(ACCOUNT_EQUITY);
       if(m_useStaticOverallDD)
       {
