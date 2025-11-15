@@ -98,6 +98,7 @@ const double  AGGRESSIVE_FLOOR = 0.60;
 const double  TIME_STOP_PROTECT_R_DEFAULT = 0.5;
 const double  FALLBACK_SLOPE_SCALE_BASE = 0.75;
 const double  FALLBACK_SCORE_DISCOUNT_BASE = 0.90;
+const double  FALLBACK_RISK_SCALE_BASE = 0.70;
 const string  TELEMETRY_FOLDER = "XAU_Swing_TrendEA_Pro";
 const string  TELEMETRY_PREFIX_BASE = "xau_bias_rr";
 
@@ -135,6 +136,7 @@ struct StrategyConfig
    bool   allowFallbackWhenBiasNeutral;
    double fallbackSlopeScale;
    double fallbackScoreDiscount;
+   double fallbackRiskScale;
    double neutralBiasRiskScale;
    bool   allowNeutralBiasOnEdge;
    double regimeLowQualityBoost;
@@ -204,6 +206,7 @@ StrategyConfig MakeBalancedConfig()
    cfg.allowFallbackWhenBiasNeutral = true;
    cfg.fallbackSlopeScale = FALLBACK_SLOPE_SCALE_BASE;
    cfg.fallbackScoreDiscount = FALLBACK_SCORE_DISCOUNT_BASE;
+   cfg.fallbackRiskScale = FALLBACK_RISK_SCALE_BASE;
    cfg.neutralBiasRiskScale = 0.50;
    cfg.allowNeutralBiasOnEdge = true;
    cfg.regimeLowQualityBoost = 0.06;
@@ -259,6 +262,7 @@ void ApplyBiasModeAdjustments(StrategyConfig &cfg,const ENUM_BiasMode mode,const
          cfg.enableFallbackEntry = false;
          cfg.enableWeekdayFallback = false;
          cfg.requireTrendForFallback = true;
+         cfg.fallbackRiskScale = 0.0;
          cfg.allowAggressiveEntries = false;
          cfg.disallowNeutralEntries = true;
          cfg.requireDirectionalBias = true;
@@ -279,6 +283,7 @@ void ApplyBiasModeAdjustments(StrategyConfig &cfg,const ENUM_BiasMode mode,const
          cfg.allowAggressiveEntries = true;
          cfg.requireStrongFallback = false;
          cfg.allowFallbackWhenBiasNeutral = true;
+         cfg.fallbackRiskScale = MathMin(1.0,FALLBACK_RISK_SCALE_BASE + 0.20);
          cfg.neutralBiasRiskScale = 0.70;
          cfg.useDynamicRisk = true;
          cfg.enableFallbackEntry = fallbackEnabled;
@@ -292,6 +297,7 @@ void ApplyBiasModeAdjustments(StrategyConfig &cfg,const ENUM_BiasMode mode,const
          cfg.allowFallbackWhenBiasNeutral = true;
          cfg.disallowNeutralEntries = false;
          cfg.requireDirectionalBias = false;
+         cfg.fallbackRiskScale = FALLBACK_RISK_SCALE_BASE;
          cfg.neutralBiasRiskScale = 0.50;
          cfg.useDynamicRisk = true;
          break;
@@ -456,7 +462,7 @@ int OnInit()
    gEntry.ConfigureNeutralPolicy(gConfig.allowNeutralBiasOnEdge,gConfig.neutralBiasRiskScale);
    gEntry.ConfigureRegimeAdjustments(gConfig.regimeLowQualityBoost,gConfig.regimeHighQualityBoost,
                                      gConfig.regimeLowRiskScale,gConfig.regimeHighRiskScale);
-   gEntry.SetFallbackPolicy(gConfig.requireStrongFallback);
+   gEntry.SetFallbackPolicy(gConfig.requireStrongFallback,gConfig.fallbackRiskScale);
 
    gExit.ConfigureRManagement(gConfig.partialTPFraction,gConfig.breakEvenR,gConfig.partialTP_R,gConfig.finalTarget_R,
                               gConfig.trailStart_R,gConfig.trailDistance_R,
@@ -921,7 +927,7 @@ void AttemptEntry(const EntrySignal &signal)
          continue;
       if((ulong)PositionGetInteger(POSITION_MAGIC)!=MAGIC_NUMBER)
          continue;
-      gExit.Register(ticket,signal,stopPoints,volume,riskPercent);
+      gExit.Register(ticket,signal,stopPoints,volume,riskPercent,gBiasLabel);
       gRisk.OnTradeOpened(riskPercent);
       AnnotateChart(StringFormat("Opened %s %.2flots",signal.direction>0?"BUY":"SELL",volume),clrGreen);
       if(DEBUG_MODE)
