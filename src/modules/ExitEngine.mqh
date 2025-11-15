@@ -47,6 +47,7 @@ struct TradeMetadata
    bool          useHardFinalTp;
    double        quality;
    BiasStrength  biasStrength;
+   string        biasLabel;
    bool          adaptiveApplied;
    double        entryAtr;
    double        maxFavorableR;
@@ -231,12 +232,17 @@ private:
                    "regime",
                    "quality",
                    "bias_strength",
+                   "bias_label",
                    "profit",
                    "commission",
                    "swap",
                    "fallback_mode",
                    "entry_price",
-                   "exit_price");
+                   "exit_price",
+                   "initial_sl",
+                   "final_tp",
+                   "entry_weekday",
+                   "entry_hour");
          m_summaryHeaderWritten = true;
       }
       else if(pos>0)
@@ -244,6 +250,18 @@ private:
       string typeLabel = (meta.family==ENTRY_FAMILY_PULLBACK ? "PULLBACK" : "BREAKOUT");
       if(meta.fallbackTrade)
          typeLabel += "_FALLBACK";
+      MqlDateTime entryDt;
+      TimeToStruct(meta.openTime,entryDt);
+      string weekday = IntegerToString(entryDt.day_of_week);
+      switch(entryDt.day_of_week)
+      {
+         case 1: weekday = "Monday"; break;
+         case 2: weekday = "Tuesday"; break;
+         case 3: weekday = "Wednesday"; break;
+         case 4: weekday = "Thursday"; break;
+         case 5: weekday = "Friday"; break;
+         default: weekday = IntegerToString(entryDt.day_of_week); break;
+      }
       FileWrite(handle,
                 TimeToString(meta.openTime,TIME_DATE|TIME_SECONDS),
                 TimeToString(exitTime,TIME_DATE|TIME_SECONDS),
@@ -260,12 +278,17 @@ private:
                 meta.regime,
                 meta.quality,
                 meta.biasStrength,
+                meta.biasLabel,
                 profit,
                 commission,
                 swap,
                 meta.fallbackTrade?"true":"false",
                 meta.entryPrice,
-                exitPrice);
+                exitPrice,
+                meta.initialStop,
+                meta.finalTpPrice,
+                weekday,
+                entryDt.hour);
       FileClose(handle);
    }
 
@@ -369,7 +392,8 @@ public:
       m_summaryConfigWritten = false;
    }
 
-   void Register(const ulong ticket,const EntrySignal &signal,const double rPoints,const double volume,const double riskPercent)
+   void Register(const ulong ticket,const EntrySignal &signal,const double rPoints,const double volume,const double riskPercent,
+                 const string &biasLabel)
    {
       if(m_count>=ArraySize(m_positions))
          return;
@@ -393,6 +417,7 @@ public:
       meta.useHardFinalTp = m_useHardFinalTP;
       meta.quality = signal.quality;
       meta.biasStrength = signal.biasStrength;
+      meta.biasLabel = biasLabel;
       meta.finalTpPrice = (m_useHardFinalTP ? signal.entryPrice + signal.direction*m_finalTP_R*rPoints*_Point : 0.0);
       meta.adaptiveApplied = !m_useAdaptiveSL;
       meta.entryAtr = MathAbs(signal.atr);
