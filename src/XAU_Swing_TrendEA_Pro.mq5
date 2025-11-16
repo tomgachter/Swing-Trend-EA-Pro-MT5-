@@ -6,7 +6,7 @@
 #property strict
 
 #include <Trade/Trade.mqh>
-#include <Calendar.mqh>
+#include <Calendar/Calendar.mqh>
 
 // --- Legacy public inputs (kept for compatibility) -----------------
 input double        RiskPerTradePercent      = 0.50;  // % of equity per trade
@@ -74,8 +74,9 @@ const string  TRADE_COMMENT = "XAU_Swing_TrendEA_Pro";
 const ENUM_TIMEFRAMES WORK_TF = PERIOD_H1;
 const ENUM_TIMEFRAMES CONFIRM_TF = PERIOD_H4;
 
-struct PositionMeta
+class PositionMeta
 {
+public:
    ulong    ticket;
    double   riskMoney;
    double   initialStop;
@@ -354,12 +355,15 @@ void EvaluateSignals()
    if(HasOpenPosition())
       return;
 
-   double closes[3];
+   double closes[];
+   ArrayResize(closes,3);
    ArraySetAsSeries(closes,true);
    if(CopyClose(_Symbol,WORK_TF,1,3,closes)<3)
       return;
-   double highs[3];
-   double lows[3];
+   double highs[];
+   double lows[];
+   ArrayResize(highs,3);
+   ArrayResize(lows,3);
    ArraySetAsSeries(highs,true);
    ArraySetAsSeries(lows,true);
    CopyHigh(_Symbol,WORK_TF,1,3,highs);
@@ -679,7 +683,6 @@ double WeekdayWeight(const int dayOfWeek)
 double CalcPositionSizeByRisk(const double entryPrice,const double stopPrice,const int direction)
 {
    double riskPercent = MathMax(0.0,RiskPerTradePercent);
-   (void)direction;
    if(riskPercent<=0.0)
       return 0.0;
    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
