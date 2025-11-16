@@ -6,7 +6,7 @@
 #property strict
 
 #include <Trade/Trade.mqh>
-#include <Calendar/Calendar.mqh>
+#include "modules/CalendarBridge.mqh"
 
 // --- Legacy public inputs (kept for compatibility) -----------------
 input double        RiskPerTradePercent      = 0.50;  // % of equity per trade
@@ -569,6 +569,15 @@ bool NewsBlockActive()
 {
    if(!UseNewsFilter)
       return false;
+#if !EA_CALENDAR_SUPPORTED
+   static bool warned=false;
+   if(!warned)
+   {
+      Print("News filter requested but economic calendar feed is unavailable in this build. Define EA_USE_NATIVE_CALENDAR if your terminal provides <Calendar/Calendar.mqh>.");
+      warned=true;
+   }
+   return false;
+#else
    datetime now = TimeCurrent();
    datetime from = now-1800;
    datetime to = now+1800;
@@ -588,6 +597,7 @@ bool NewsBlockActive()
          return true;
    }
    return false;
+#endif
 }
 
 double CalcATR()
