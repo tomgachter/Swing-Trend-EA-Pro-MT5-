@@ -1,3 +1,0 @@
-Weeks_in_sample: 46
-Average_trades_per_week: 2.74
-Total_trades: 126
