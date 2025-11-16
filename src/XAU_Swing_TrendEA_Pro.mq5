@@ -1,608 +1,277 @@
 //+------------------------------------------------------------------+
-//| XAU_Swing_TrendEA_Pro.mq5                                        |
-//| Refactored swing/breakout Expert Advisor for XAUUSD (MT5)        |
-//| Session: 07:00-14:45, Bias votes: EMA20(H1)/EMA34(H4)/EMA50(D1)  |
-//| Risk: ATR stop sizing, R-multiple partials/trailing/time-stop    |
+//|                                                 XAU_Swing_TrendEA |
+//|      ATR/trend/news gated Expert Advisor for XAUUSD (H1)         |
 //+------------------------------------------------------------------+
-// v1.3 – 2024-05-08 – Directional score thresholds, adaptive ATR stop tightening,
-//                     extended R-management defaults and richer entry logging.
+#property version   "2.0"
 #property strict
 
-#include <Trade\Trade.mqh>
+#include <Trade/Trade.mqh>
+#include <Calendar.mqh>
 
-#include "modules/TesterCompat.mqh"
-#include "modules/RegimeFilter.mqh"
-#include "modules/SessionFilter.mqh"
-#include "modules/BiasEngine.mqh"
-#include "modules/EntryEngine.mqh"
-#include "modules/Sizer.mqh"
-#include "modules/BrokerUtils.mqh"
-#include "modules/RiskEngine.mqh"
-#include "modules/ExitEngine.mqh"
-
-/*
- * --------------------------------------------------------------------
- * PUBLIC PARAMETER SUMMARY (10 inputs)
- * 1. RiskPerTradePercent      – percent of equity risked per trade.
- * 2. MaxDailyLossPercent      – realised + open loss cap per day in percent.
- * 3. MaxStaticDrawdownPercent – static equity drawdown kill switch in percent
- *                               (<=0 disables the static kill switch for testing).
- * 4. AllowLongs               – enable long trades.
- * 5. AllowShorts              – enable short trades.
- * 6. SessionStartHour         – broker hour for session start (minutes fixed to 00).
- * 7. SessionEndHour           – broker hour for session end (minutes fixed to 45).
- * 8. BiasMode                 – multi-timeframe bias discipline profile.
- * 9. RRProfile                – exit / R-multiple management profile.
- *10. EnableFallbackEntries    – allow relaxed/fallback entries outside the
- *                               A-session core window.
- *
- * BiasMode:
- *  - BIAS_STRICT     enforces unanimous EMA slope alignment, raises slope/score
- *                    thresholds and disables neutral-bias trades.
- *  - BIAS_BALANCED   mirrors the legacy "Balanced v2" bias discipline with
- *                    controlled neutral exposure and selective fallbacks.
- *  - BIAS_AGGRESSIVE relaxes slope thresholds slightly and allows wider
- *                    neutral-bias participation.
- *
- * RRProfile:
- *  - RR_CONSERVATIVE uses a single 1.5R target with optional late time-stop.
- *  - RR_BALANCED     (default) applies 50-60% partials near 1.1R, BE around 0.9R
- *                    and trails from ~1.6R towards a 1.9R hard target.
- *  - RR_RUNNER       leaves a runner beyond 1R with loose trailing and no hard TP.
- */
-
-enum ENUM_BiasMode
-{
-   BIAS_STRICT = 0,
-   BIAS_BALANCED = 1,
-   BIAS_AGGRESSIVE = 2
-};
-
-enum ENUM_RRProfile
-{
-   RR_CONSERVATIVE = 0,
-   RR_BALANCED     = 1,
-   RR_RUNNER       = 2
-};
-
-// --- Public inputs --------------------------------------------------
+// --- Legacy public inputs (kept for compatibility) -----------------
 input double        RiskPerTradePercent      = 0.50;  // % of equity per trade
 input double        MaxDailyLossPercent      = 5.00;  // realised + open loss cap per day in %
 input double        MaxStaticDrawdownPercent = 12.00; // static equity DD kill switch (<=0 disables)
 input bool          AllowLongs               = true;  // enable long trades
 input bool          AllowShorts              = true;  // enable short trades
-input int           SessionStartHour         = 7;     // broker time, minutes fixed to 00
-input int           SessionEndHour           = 14;    // broker time, minutes fixed internally to 45
-input ENUM_BiasMode BiasMode                 = BIAS_BALANCED;
-input ENUM_RRProfile RRProfile               = RR_BALANCED;
-input bool          EnableFallbackEntries    = true;  // allow relaxed fallback entries
-input bool          AllowMondayTrading       = true;  // Mondays stay tradable but may be risk-reduced
-input bool          AllowTuesdayTrading      = true;  // keep Tuesday active by default
-input bool          AllowWednesdayTrading    = true;  // Wednesday carried most gains historically
-input bool          AllowThursdayTrading     = true;  // Thursday marginal but still allowed
-input bool          AllowFridayTrading       = true;  // Fridays tradable (soft-penalised instead of blocked)
-input double        MondayRiskScale          = 0.65;  // soft-penalty for weak Mondays (1.0 = no change)
-input double        TuesdayRiskScale         = 1.00;  // keep full size on stronger Tuesdays
-input double        WednesdayRiskScale       = 0.85;  // mild haircut for mid-week softness
-input double        ThursdayRiskScale        = 0.90;  // slightly reduced size for marginal Thursdays
-input double        FridayRiskScale          = 0.75;  // soften risk on historically weak Fridays
-input bool          RestrictEntryHours       = true;  // enforce intraday hour whitelist
-input int           AllowedEntryHourStart    = 9;     // inclusive start hour (broker time)
-input int           AllowedEntryHourEnd      = 12;    // inclusive end hour (broker time)
+input int           SessionStartHour         = 7;
+input int           SessionEndHour           = 14;
+input int           BiasMode                 = 1;
+input int           RRProfile                = 1;
+input bool          EnableFallbackEntries    = true;
+input bool          AllowMondayTrading       = true;
+input bool          AllowTuesdayTrading      = true;
+input bool          AllowWednesdayTrading    = true;
+input bool          AllowThursdayTrading     = true;
+input bool          AllowFridayTrading       = true;
+input double        MondayRiskScale          = 0.65;
+input double        TuesdayRiskScale         = 1.00;
+input double        WednesdayRiskScale       = 0.85;
+input double        ThursdayRiskScale        = 0.90;
+input double        FridayRiskScale          = 0.75;
+input bool          RestrictEntryHours       = true;
+input int           AllowedEntryHourStart    = 9;
+input int           AllowedEntryHourEnd      = 12;
 
-// --- Internal constants ---------------------------------------------
-const ulong   MAGIC_NUMBER = 20241026;
+// --- New ATR risk inputs -------------------------------------------
+input int           ATR_Period               = 14;
+input double        ATR_SL_Mult              = 1.2;
+input double        ATR_TP_Mult              = 2.2;
+input double        Breakeven_ATR            = 0.8;
+input double        Trail_ATR_Step           = 0.25;
+
+// --- Trend / Regime inputs ----------------------------------------
+input int           EMAfast                  = 50;
+input int           EMAslow                  = 200;
+input bool          UseTrendFilter           = true;
+input int           ADX_Period               = 14;
+input double        ADX_MinTrend             = 18.0;
+input double        ADX_MaxMR                = 12.0;
+
+// --- Session & news gating inputs ----------------------------------
+input double        StartHour                = 10.0;  // broker time decimal hour
+input double        EndHour                  = 11.5;  // broker time decimal hour
+input bool          UseNewsFilter            = true;
+input int           MaxSpreadPoints          = 200;
+
+// --- Dynamic weekday weighting -------------------------------------
+input int           NWeeks                   = 12;
+
+// --- Session risk guard --------------------------------------------
+input int           MaxLosingTradesPerDay    = 2;
+input double        MaxRPerDay               = -1.0;
+
+// --- Time based exits ----------------------------------------------
+input int           NoProgressMinutes        = 120;
+input double        MinProgressR             = 0.3;
+input double        EarlyMAE_R               = 0.7;
+input int           EarlyMAE_Minutes         = 45;
+
+// --- Safety ---------------------------------------------------------
+input int           PropagationMagic         = 20241026;
+
 const string  TRADE_COMMENT = "XAU_Swing_TrendEA_Pro";
-const bool    DEBUG_MODE = false;
-const bool    FORCE_VERBOSE_LOG = false;
-const bool    RANDOMIZE_ENTRY_EXIT = false;
-const bool    ENABLE_CHART_ANNOTATIONS = true;
-const bool    ENABLE_TRADE_TELEMETRY = true;
-const int     SLIPPAGE_BUDGET_POINTS = 80;
-const int     MAX_CONCURRENT_POSITIONS = 2;
-const int     MAX_SPREAD_POINTS = 200;
-const int     PROP_DAY_START_HOUR = 0;
-const bool    USE_STATIC_OVERALL_DD = true;
-const ENUM_TIMEFRAMES ENTRY_TIMEFRAME = PERIOD_H1;
-const int     SESSION_START_MINUTE = 0;
-const int     SESSION_END_MINUTE_DEFAULT = 45;
-const int     SESSION_CUTOFF_MINUTE = 45;
-const double  AGGRESSIVE_DISCOUNT = 0.05;
-const double  AGGRESSIVE_FLOOR = 0.60;
-const double  TIME_STOP_PROTECT_R_DEFAULT = 0.5;
-const double  FALLBACK_SLOPE_SCALE_BASE = 0.75;
-const double  FALLBACK_SCORE_DISCOUNT_BASE = 0.90;
-const double  FALLBACK_RISK_SCALE_BASE = 0.70;
-const string  TELEMETRY_FOLDER = "XAU_Swing_TrendEA_Pro";
-const string  TELEMETRY_PREFIX_BASE = "xau_bias_rr";
+const ENUM_TIMEFRAMES WORK_TF = PERIOD_H1;
+const ENUM_TIMEFRAMES CONFIRM_TF = PERIOD_H4;
 
-// TODO: Backtest XAUUSD H1 2021-2025 (spread 20) with BIAS_BALANCED/RR_BALANCED and BIAS_STRICT/RR_CONSERVATIVE.
-
-struct StrategyConfig
+struct PositionMeta
 {
-   int    biasVotesRequired;
-   double biasSlopeThH1;
-   double biasSlopeThH4;
-   double biasSlopeThD1;
-   double biasSlopeConfirmH1;
-   double biasSlopeConfirmH4;
-   double biasSlopeConfirmD1;
-   double biasScoreThresholdCore;
-   double biasScoreThresholdEdge;
-   double biasScoreRegimeLowBoost;
-   double biasScoreRegimeHighBoost;
-   double coreQualityLong;
-   double coreQualityShort;
-   double edgeQualityLong;
-   double edgeQualityShort;
-   double pullbackBodyAtrMin;
-   double breakoutImpulseAtrMin;
-   int    breakoutRangeBars;
-   bool   allowAggressiveEntries;
-   bool   allowLongs;
-   bool   allowShorts;
-   bool   enableFallbackEntry;
-   bool   enableWeekdayFallback;
-   int    fallbackMinHour;
-   int    fallbackMaxPer7D;
-   bool   requireStrongFallback;
-   bool   requireTrendForFallback;
-   bool   allowFallbackWhenBiasNeutral;
-   double fallbackSlopeScale;
-   double fallbackScoreDiscount;
-   double fallbackRiskScale;
-   double neutralBiasRiskScale;
-   bool   allowNeutralBiasOnEdge;
-   double regimeLowQualityBoost;
-   double regimeHighQualityBoost;
-   double regimeLowRiskScale;
-   double regimeHighRiskScale;
-   bool   useDynamicRisk;
-   int    maxNewTradesPerDay;
-   int    maxLosingTradesPerDay;
-   int    maxLosingTradesInARow;
-   double riskScaleAfterLosingStreak;
-   double partialTPFraction;
-   double breakEvenR;
-   double partialTP_R;
-   double trailStart_R;
-   double trailDistance_R;
-   double timeStopProtectR;
-   double finalTarget_R;
-   int    timeStopBars;
-   double initialStopATR;
-   bool   useHardFinalTP;
-   bool   useTimeStop;
-   bool   useAdaptiveSL;
-   int    adaptiveAfterBars;
-   double adaptiveMultiplier;
-   double adaptiveMinProfitR;
-   int    lateEntryCutoffHour;
-   int    lateEntryCutoffMinute;
-   int    sessionEndMinute;
-   int    sessionCutoffMinute;
-   bool   disallowNeutralEntries;
-   bool   bypassSlopeScoreCheck;
-   bool   bypassSlopeVoteCheck;
-   bool   requireDirectionalBias;
+   ulong    ticket;
+   double   riskMoney;
+   double   initialStop;
+   double   atrAtEntry;
+   datetime entryTime;
+   bool     movedToBE;
+   double   minR;
 };
 
-StrategyConfig MakeBalancedConfig()
+struct WeekdayStats
 {
-   StrategyConfig cfg;
-   cfg.biasVotesRequired = 2;
-   cfg.biasSlopeThH1 = 0.020;
-   cfg.biasSlopeThH4 = 0.018;
-   cfg.biasSlopeThD1 = 0.015;
-   cfg.biasSlopeConfirmH1 = 0.018;
-   cfg.biasSlopeConfirmH4 = 0.014;
-   cfg.biasSlopeConfirmD1 = 0.010;
-   cfg.biasScoreThresholdCore = 0.060;
-   cfg.biasScoreThresholdEdge = 0.085;
-   cfg.biasScoreRegimeLowBoost = 0.015;
-   cfg.biasScoreRegimeHighBoost = 0.005;
-   cfg.coreQualityLong = 0.82;
-   cfg.coreQualityShort = 0.76;
-   cfg.edgeQualityLong = 0.90;
-   cfg.edgeQualityShort = 0.85;
-   cfg.pullbackBodyAtrMin = 0.45;
-   cfg.breakoutImpulseAtrMin = 0.42;
-   cfg.breakoutRangeBars = 6;
-   cfg.allowAggressiveEntries = false;
-   cfg.allowLongs = true;
-   cfg.allowShorts = true;
-   cfg.enableFallbackEntry = true;
-   cfg.enableWeekdayFallback = true;
-   cfg.fallbackMinHour = 12;
-   cfg.fallbackMaxPer7D = 2;
-   cfg.requireStrongFallback = true;
-   cfg.requireTrendForFallback = false;
-   cfg.allowFallbackWhenBiasNeutral = true;
-   cfg.fallbackSlopeScale = FALLBACK_SLOPE_SCALE_BASE;
-   cfg.fallbackScoreDiscount = FALLBACK_SCORE_DISCOUNT_BASE;
-   cfg.fallbackRiskScale = FALLBACK_RISK_SCALE_BASE;
-   cfg.neutralBiasRiskScale = 0.50;
-   cfg.allowNeutralBiasOnEdge = true;
-   cfg.regimeLowQualityBoost = 0.06;
-   cfg.regimeHighQualityBoost = 0.03;
-   cfg.regimeLowRiskScale = 0.60;
-   cfg.regimeHighRiskScale = 1.05;
-   cfg.useDynamicRisk = true;
-   cfg.maxNewTradesPerDay = 3;
-   cfg.maxLosingTradesPerDay = 3;
-   cfg.maxLosingTradesInARow = 3;
-   cfg.riskScaleAfterLosingStreak = 0.50;
-   cfg.partialTPFraction = 0.55;
-   cfg.breakEvenR = 0.85;
-   cfg.partialTP_R = 1.05;
-   cfg.trailStart_R = 1.45;
-   cfg.trailDistance_R = 0.80;
-   cfg.timeStopProtectR = TIME_STOP_PROTECT_R_DEFAULT;
-   cfg.finalTarget_R = 1.75;
-   cfg.timeStopBars = 36;
-   cfg.initialStopATR = 1.20;
-   cfg.useHardFinalTP = true;
-   cfg.useTimeStop = true;
-   cfg.useAdaptiveSL = true;
-   cfg.adaptiveAfterBars = 10;
-   cfg.adaptiveMultiplier = 1.2;
-   cfg.adaptiveMinProfitR = 0.5;
-   cfg.lateEntryCutoffHour = 14;
-   cfg.lateEntryCutoffMinute = 0;
-   cfg.sessionEndMinute = SESSION_END_MINUTE_DEFAULT;
-   cfg.sessionCutoffMinute = SESSION_CUTOFF_MINUTE;
-   cfg.disallowNeutralEntries = false;
-   cfg.bypassSlopeScoreCheck = false;
-   cfg.bypassSlopeVoteCheck = false;
-   cfg.requireDirectionalBias = false;
-   return cfg;
-}
-void ApplyBiasModeAdjustments(StrategyConfig &cfg,const ENUM_BiasMode mode,const bool fallbackEnabled)
+   double expectancy;
+   int    trades;
+};
+
+CTrade gTrader;
+int gAtrHandle = INVALID_HANDLE;
+int gEmaFastH1 = INVALID_HANDLE;
+int gEmaSlowH1 = INVALID_HANDLE;
+int gEmaFastH4 = INVALID_HANDLE;
+int gEmaSlowH4 = INVALID_HANDLE;
+int gAdxHandle = INVALID_HANDLE;
+datetime gLastBarTime = 0;
+datetime gCurrentDay = 0;
+double gDayStartEquity = 0.0;
+double gInitialEquity = 0.0;
+bool   gDailyLossHalt = false;
+int    gLosingTradesToday = 0;
+double gSumRToday = 0.0;
+double gFallbackWeights[7];
+bool   gUseDynamicWeights = false;
+WeekdayStats gWeekdayStats[7];
+string gLastBlockReason = "";
+
+struct PositionMetaArray
 {
-   switch(mode)
+   PositionMeta data[];
+   int IndexOf(const ulong ticket) const
    {
-      case BIAS_STRICT:
-         cfg.biasSlopeThH1 *= 1.25;
-         cfg.biasSlopeThH4 *= 1.25;
-         cfg.biasSlopeThD1 *= 1.25;
-         cfg.biasSlopeConfirmH1 *= 1.25;
-         cfg.biasSlopeConfirmH4 *= 1.25;
-         cfg.biasSlopeConfirmD1 *= 1.25;
-         cfg.biasScoreThresholdCore *= 1.20;
-         cfg.biasScoreThresholdEdge *= 1.25;
-         cfg.biasVotesRequired = 3;
-         cfg.allowNeutralBiasOnEdge = false;
-         cfg.allowFallbackWhenBiasNeutral = false;
-         cfg.enableFallbackEntry = false;
-         cfg.enableWeekdayFallback = false;
-         cfg.requireTrendForFallback = true;
-         cfg.fallbackRiskScale = 0.0;
-         cfg.allowAggressiveEntries = false;
-         cfg.disallowNeutralEntries = true;
-         cfg.requireDirectionalBias = true;
-         cfg.neutralBiasRiskScale = 0.0;
-         cfg.maxLosingTradesPerDay = 2;
-         cfg.maxLosingTradesInARow = 2;
-         cfg.useDynamicRisk = true;
-         break;
-      case BIAS_AGGRESSIVE:
-         cfg.biasSlopeThH1 *= 0.80;
-         cfg.biasSlopeThH4 *= 0.80;
-         cfg.biasSlopeThD1 *= 0.80;
-         cfg.biasSlopeConfirmH1 *= 0.80;
-         cfg.biasSlopeConfirmH4 *= 0.80;
-         cfg.biasSlopeConfirmD1 *= 0.80;
-         cfg.biasScoreThresholdCore *= 0.85;
-         cfg.biasScoreThresholdEdge *= 0.80;
-         cfg.allowAggressiveEntries = true;
-         cfg.requireStrongFallback = false;
-         cfg.allowFallbackWhenBiasNeutral = true;
-         cfg.fallbackRiskScale = MathMin(1.0,FALLBACK_RISK_SCALE_BASE + 0.20);
-         cfg.neutralBiasRiskScale = 0.70;
-         cfg.useDynamicRisk = true;
-         cfg.enableFallbackEntry = fallbackEnabled;
-         cfg.enableWeekdayFallback = fallbackEnabled;
-         break;
-      default: // BIAS_BALANCED
-         cfg.enableFallbackEntry = fallbackEnabled;
-         cfg.enableWeekdayFallback = fallbackEnabled;
-         cfg.allowAggressiveEntries = false;
-         cfg.requireTrendForFallback = false;
-         cfg.allowFallbackWhenBiasNeutral = true;
-         cfg.disallowNeutralEntries = false;
-         cfg.requireDirectionalBias = false;
-         cfg.fallbackRiskScale = FALLBACK_RISK_SCALE_BASE;
-         cfg.neutralBiasRiskScale = 0.50;
-         cfg.useDynamicRisk = true;
-         break;
+      for(int i=0;i<ArraySize(data);i++)
+         if(data[i].ticket==ticket)
+            return i;
+      return -1;
    }
-
-   if(mode!=BIAS_STRICT)
+   PositionMeta* Get(const ulong ticket)
    {
-      cfg.enableFallbackEntry = fallbackEnabled;
+      int idx = IndexOf(ticket);
+      if(idx<0)
+         return NULL;
+      return &data[idx];
    }
-}
-
-void ApplyRRProfileAdjustments(StrategyConfig &cfg,const ENUM_RRProfile profile)
-{
-   switch(profile)
+   void Ensure(const ulong ticket,const double riskMoney,const double atr,const datetime entry,const double stop)
    {
-      case RR_CONSERVATIVE:
-         cfg.partialTPFraction = 0.0;
-         cfg.breakEvenR = 0.80;
-         cfg.partialTP_R = 1.50;
-         cfg.trailStart_R = 0.0;
-         cfg.trailDistance_R = 0.0;
-         cfg.finalTarget_R = 1.50;
-         cfg.timeStopBars = 60;
-         cfg.useHardFinalTP = true;
-         cfg.useTimeStop = true;
-         cfg.timeStopProtectR = 0.40;
-         cfg.useAdaptiveSL = false;
-         break;
-      case RR_RUNNER:
-         cfg.partialTPFraction = 0.35;
-         cfg.breakEvenR = 0.85;
-         cfg.partialTP_R = 1.00;
-         cfg.trailStart_R = 1.20;
-         cfg.trailDistance_R = 1.20;
-         cfg.finalTarget_R = 3.50;
-         cfg.timeStopBars = 70;
-         cfg.useHardFinalTP = false;
-         cfg.useTimeStop = true;
-         cfg.timeStopProtectR = 0.30;
-         cfg.useAdaptiveSL = true;
-         cfg.adaptiveAfterBars = 12;
-         cfg.adaptiveMultiplier = 1.3;
-         cfg.adaptiveMinProfitR = 0.6;
-         break;
-      default: // RR_BALANCED
-         cfg.partialTPFraction = 0.55;
-         cfg.breakEvenR = 0.90;
-         cfg.partialTP_R = 1.10;
-         cfg.trailStart_R = 1.60;
-         cfg.trailDistance_R = 0.85;
-         cfg.finalTarget_R = 1.90;
-         cfg.timeStopBars = 40;
-         cfg.useHardFinalTP = true;
-         cfg.useTimeStop = true;
-         cfg.timeStopProtectR = TIME_STOP_PROTECT_R_DEFAULT;
-         cfg.useAdaptiveSL = true;
-         cfg.adaptiveAfterBars = 10;
-         cfg.adaptiveMultiplier = 1.2;
-         cfg.adaptiveMinProfitR = 0.5;
-         break;
+      if(IndexOf(ticket)>=0)
+         return;
+      PositionMeta meta;
+      meta.ticket = ticket;
+      meta.riskMoney = riskMoney;
+      meta.atrAtEntry = atr;
+      meta.entryTime = entry;
+      meta.initialStop = stop;
+      meta.movedToBE = false;
+      meta.minR = 0.0;
+      int newSize = ArraySize(data)+1;
+      ArrayResize(data,newSize);
+      data[newSize-1] = meta;
    }
-}
-
-string BiasModeToString(const ENUM_BiasMode mode)
-{
-   switch(mode)
+   void Remove(const ulong ticket)
    {
-      case BIAS_STRICT:     return "BIAS_STRICT";
-      case BIAS_AGGRESSIVE: return "BIAS_AGGRESSIVE";
-      default:              return "BIAS_BALANCED";
+      int idx = IndexOf(ticket);
+      if(idx<0)
+         return;
+      int last = ArraySize(data)-1;
+      if(idx!=last)
+         data[idx] = data[last];
+      ArrayResize(data,last);
    }
-}
+} gMeta;
 
-string RRProfileToString(const ENUM_RRProfile profile)
-{
-   switch(profile)
-   {
-      case RR_CONSERVATIVE: return "RR_CONSERVATIVE";
-      case RR_RUNNER:       return "RR_RUNNER";
-      default:              return "RR_BALANCED";
-   }
-}
-
-string ComposeTelemetryPrefix(const ENUM_BiasMode bias,const ENUM_RRProfile profile)
-{
-   return TELEMETRY_PREFIX_BASE + "_" + BiasModeToString(bias) + "_" + RRProfileToString(profile);
-}
-
-StrategyConfig gConfig;
-string         gBiasLabel = "";
-string         gRRLabel   = "";
-
-//--- globals
-BrokerUtils   gBroker;
-RegimeFilter  gRegime;
-SessionFilter gSession;
-BiasEngine    gBias;
-EntryEngine   gEntry;
-PositionSizer gSizer;
-RiskEngine    gRisk;
-ExitEngine    gExit;
-
-datetime      gLastBarTime = 0;
-datetime      gEntryHistory[];
-int           gFallbackWeekId = -1;
-bool          gFallbackUsedThisWeek = false;
-bool          gVerboseDecisionLog = false;
-#define      RECENT_TRADE_WINDOW 10
-double        gRecentTradePnL[RECENT_TRADE_WINDOW];
-int           gRecentTradeCount = 0;
-bool          gUseHourWhitelist = false;
-int           gHourFilterStart = 0;
-int           gHourFilterEnd = 0;
-
-//--- helper declarations
-bool IsNewBar();
-void EvaluateNewBar();
+// Forward declarations
+bool AllowedToTradeNow();
+bool AllowedToTradeNowInternal(string &reason);
+bool TrendUp();
+bool TrendDown();
+bool NewsBlockActive();
+double CalcATR();
+double CalcPositionSizeByRisk(const double entryPrice,const double stopPrice,const int direction);
+void UpdateStops(const ulong ticket);
+void UpdateRiskCountersOnClose(const double profit,const double riskMoney);
 void ManageOpenPositions();
-bool HasDirectionalPosition(const int direction);
-void AnnotateChart(const string message,const color col=clrDodgerBlue);
-void AttemptEntry(const EntrySignal &signal);
-string SessionWindowToString(const SessionWindow window,const bool fallback);
-string DirectionToString(const int direction);
+void ApplyTimeExits(const ulong ticket);
+void EvaluateSignals();
+bool HasOpenPosition();
+void UpdateWeekdayExpectancies();
 void CloseAllPositions();
-void RecordEntryTime(const datetime entryTime,const bool fallbackTrade);
-void CleanupEntryHistory(const datetime reference);
-int  EntriesLastSevenDays(const datetime reference);
-int  ComputeWeekId(const datetime time);
-bool ShouldUseFallbackEntry(const datetime signalTime,const int recentEntries);
-void ResetRecentPnL();
-void RecordClosedTradePnL(const double profit);
-bool RecentPnLPositive();
-bool IsWeekdayAllowed(const int dayOfWeek);
-bool EntryHourAllowed(const int hour);
-double WeekdayRiskScaleValue(const int dayOfWeek);
-int CountOpenPositions();
 
+// Utility helpers ----------------------------------------------------
+double DecimalHourToMinutes(const double hour)
+{
+   double minutes = hour*60.0;
+   return MathMax(0.0,MathMin(1439.0,minutes));
+}
 
-//+------------------------------------------------------------------+
-//| Expert initialization                                            |
-//+------------------------------------------------------------------+
+void RefreshFallbackWeights()
+{
+   ArrayInitialize(gFallbackWeights,1.0);
+   gFallbackWeights[1] = MathMax(0.0,MondayRiskScale);
+   gFallbackWeights[2] = MathMax(0.0,TuesdayRiskScale);
+   gFallbackWeights[3] = MathMax(0.0,WednesdayRiskScale);
+   gFallbackWeights[4] = MathMax(0.0,ThursdayRiskScale);
+   gFallbackWeights[5] = MathMax(0.0,FridayRiskScale);
+}
+
+void ResetDayState()
+{
+   gCurrentDay = TimeCurrent();
+   gDayStartEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   gDailyLossHalt = false;
+   gLosingTradesToday = 0;
+   gSumRToday = 0.0;
+}
+
+bool IsNewTradingDay(const datetime now)
+{
+   if(gCurrentDay==0)
+      return true;
+   MqlDateTime dtNow,dtPrev;
+   TimeToStruct(now,dtNow);
+   TimeToStruct(gCurrentDay,dtPrev);
+   return (dtNow.day!=dtPrev.day || dtNow.mon!=dtPrev.mon || dtNow.year!=dtPrev.year);
+}
+
+bool InitIndicators()
+{
+   gAtrHandle = iATR(_Symbol,WORK_TF,ATR_Period);
+   gEmaFastH1 = iMA(_Symbol,WORK_TF,EMAfast,0,MODE_EMA,PRICE_CLOSE);
+   gEmaSlowH1 = iMA(_Symbol,WORK_TF,EMAslow,0,MODE_EMA,PRICE_CLOSE);
+   gEmaFastH4 = iMA(_Symbol,CONFIRM_TF,EMAfast,0,MODE_EMA,PRICE_CLOSE);
+   gEmaSlowH4 = iMA(_Symbol,CONFIRM_TF,EMAslow,0,MODE_EMA,PRICE_CLOSE);
+   gAdxHandle = iADX(_Symbol,WORK_TF,ADX_Period);
+   return (gAtrHandle!=INVALID_HANDLE && gEmaFastH1!=INVALID_HANDLE &&
+           gEmaSlowH1!=INVALID_HANDLE && gEmaFastH4!=INVALID_HANDLE &&
+           gEmaSlowH4!=INVALID_HANDLE && gAdxHandle!=INVALID_HANDLE);
+}
+
+void ReleaseIndicators()
+{
+   if(gAtrHandle!=INVALID_HANDLE)   IndicatorRelease(gAtrHandle);
+   if(gEmaFastH1!=INVALID_HANDLE)   IndicatorRelease(gEmaFastH1);
+   if(gEmaSlowH1!=INVALID_HANDLE)   IndicatorRelease(gEmaSlowH1);
+   if(gEmaFastH4!=INVALID_HANDLE)   IndicatorRelease(gEmaFastH4);
+   if(gEmaSlowH4!=INVALID_HANDLE)   IndicatorRelease(gEmaSlowH4);
+   if(gAdxHandle!=INVALID_HANDLE)   IndicatorRelease(gAdxHandle);
+}
+
 int OnInit()
 {
-   gConfig = MakeBalancedConfig();
-   ApplyBiasModeAdjustments(gConfig,BiasMode,EnableFallbackEntries);
-   ApplyRRProfileAdjustments(gConfig,RRProfile);
-   gConfig.allowLongs = AllowLongs;
-   gConfig.allowShorts = AllowShorts;
-   if(!EnableFallbackEntries)
+   gTrader.SetExpertMagicNumber((ulong)PropagationMagic);
+   gTrader.SetDeviationInPoints(80);
+   gInitialEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+   RefreshFallbackWeights();
+   if(!InitIndicators())
    {
-      gConfig.enableFallbackEntry = false;
-      gConfig.enableWeekdayFallback = false;
-   }
-   gBiasLabel = BiasModeToString(BiasMode);
-   gRRLabel = RRProfileToString(RRProfile);
-
-   gVerboseDecisionLog = (DEBUG_MODE || FORCE_VERBOSE_LOG);
-   gBroker.Configure(MAGIC_NUMBER,TRADE_COMMENT,20);
-   gSession.Configure(SessionStartHour,SESSION_START_MINUTE,SessionEndHour,gConfig.sessionEndMinute);
-   gSession.SetDebugMode(DEBUG_MODE,false);
-   gUseHourWhitelist = RestrictEntryHours;
-   gHourFilterStart = MathMax(0,MathMin(23,AllowedEntryHourStart));
-   gHourFilterEnd = MathMax(0,MathMin(23,AllowedEntryHourEnd));
-
-   gEntry.Configure(RANDOMIZE_ENTRY_EXIT);
-   gEntry.ConfigureSensitivity(gConfig.pullbackBodyAtrMin,gConfig.breakoutImpulseAtrMin,gConfig.breakoutRangeBars);
-   gEntry.SetStopMultiplier(gConfig.initialStopATR);
-   gEntry.SetQualityThresholds(gConfig.coreQualityLong,gConfig.coreQualityShort,
-                               gConfig.edgeQualityLong,gConfig.edgeQualityShort,
-                               gConfig.allowAggressiveEntries,AGGRESSIVE_DISCOUNT,AGGRESSIVE_FLOOR);
-   gEntry.SetDirectionalPermissions(gConfig.allowLongs,gConfig.allowShorts);
-   gEntry.ConfigureNeutralPolicy(gConfig.allowNeutralBiasOnEdge,gConfig.neutralBiasRiskScale);
-   gEntry.ConfigureRegimeAdjustments(gConfig.regimeLowQualityBoost,gConfig.regimeHighQualityBoost,
-                                     gConfig.regimeLowRiskScale,gConfig.regimeHighRiskScale);
-   gEntry.SetFallbackPolicy(gConfig.requireStrongFallback,gConfig.fallbackRiskScale);
-
-   gExit.ConfigureRManagement(gConfig.partialTPFraction,gConfig.breakEvenR,gConfig.partialTP_R,gConfig.finalTarget_R,
-                              gConfig.trailStart_R,gConfig.trailDistance_R,
-                              gConfig.useHardFinalTP,gConfig.useTimeStop,gConfig.timeStopBars,gConfig.timeStopProtectR);
-   gExit.ConfigureAdaptiveSL(gConfig.useAdaptiveSL,gConfig.adaptiveAfterBars,gConfig.adaptiveMultiplier,gConfig.adaptiveMinProfitR);
-   gExit.SetEntryTimeframe(ENTRY_TIMEFRAME);
-   gExit.SetVerbose(gVerboseDecisionLog);
-   string telemetryPrefix = ComposeTelemetryPrefix(BiasMode,RRProfile);
-   gExit.ConfigureTelemetry(ENABLE_TRADE_TELEMETRY,TELEMETRY_FOLDER,telemetryPrefix);
-
-   string headerNames[10];
-   string headerValues[10];
-   headerNames[0] = "RiskPerTradePercent";      headerValues[0] = DoubleToString(RiskPerTradePercent,2);
-   headerNames[1] = "MaxDailyLossPercent";     headerValues[1] = DoubleToString(MaxDailyLossPercent,2);
-   headerNames[2] = "MaxStaticDrawdownPercent";headerValues[2] = DoubleToString(MaxStaticDrawdownPercent,2);
-   headerNames[3] = "AllowLongs";              headerValues[3] = (AllowLongs?"true":"false");
-   headerNames[4] = "AllowShorts";             headerValues[4] = (AllowShorts?"true":"false");
-   headerNames[5] = "SessionStartHour";        headerValues[5] = IntegerToString(SessionStartHour);
-   headerNames[6] = "SessionEndHour";          headerValues[6] = IntegerToString(SessionEndHour);
-   headerNames[7] = "BiasMode";                headerValues[7] = gBiasLabel;
-   headerNames[8] = "RRProfile";               headerValues[8] = gRRLabel;
-   headerNames[9] = "EnableFallbackEntries";   headerValues[9] = (EnableFallbackEntries?"true":"false");
-   gExit.SetTelemetryConfigSnapshot(gBiasLabel,gRRLabel,headerNames,headerValues,10);
-
-   string persistKey = StringFormat("STEA:%s:%I64u",_Symbol,MAGIC_NUMBER);
-   double ddPercent = (MaxStaticDrawdownPercent>0.0 ? MaxStaticDrawdownPercent : 0.0);
-   bool useStaticDD = (MaxStaticDrawdownPercent>0.0 && USE_STATIC_OVERALL_DD);
-   // RiskEngine uses the day-anchor equity for daily caps and the recorded initial equity for
-   // the static drawdown guard so that all percent checks reference a consistent capital base.
-   gRisk.Configure(RISK_PERCENT_PER_TRADE,RiskPerTradePercent,MaxDailyLossPercent,ddPercent,
-                   PROP_DAY_START_HOUR,persistKey,useStaticDD,(double)SLIPPAGE_BUDGET_POINTS);
-   gRisk.SetDebugMode(DEBUG_MODE);
-   gRisk.SetVerboseMode(gVerboseDecisionLog);
-   gRisk.SetDynamicRiskEnabled(gConfig.useDynamicRisk);
-   gRisk.ConfigureTradeDiscipline(gConfig.maxNewTradesPerDay,gConfig.maxLosingTradesPerDay,
-                                  gConfig.maxLosingTradesInARow,gConfig.riskScaleAfterLosingStreak);
-
-   if(!gRegime.Init(_Symbol,14))
-   {
-      Print("Failed to initialise regime filter");
+      Print("Indicator init failed");
       return INIT_FAILED;
    }
-   if(!gBias.Init(_Symbol))
-   {
-      Print("Failed to initialise bias engine");
-      return INIT_FAILED;
-   }
-   gBias.ConfigureThresholds(gConfig.biasVotesRequired,gConfig.biasSlopeThH1,gConfig.biasSlopeThH4,gConfig.biasSlopeThD1);
-   gBias.SetSlopeThreshold(1.0);
-   gBias.SetDebug(gVerboseDecisionLog);
-   if(!gSizer.Init(_Symbol))
-   {
-      Print("Failed to initialise position sizer");
-      return INIT_FAILED;
-   }
-   gRegime.Update(true);
-   ArrayResize(gEntryHistory,0);
-   gFallbackWeekId = -1;
-   gFallbackUsedThisWeek = false;
-   ResetRecentPnL();
+   ResetDayState();
+   gLastBarTime = 0;
    return INIT_SUCCEEDED;
 }
 
-//+------------------------------------------------------------------+
-//| Expert deinitialisation                                          |
-//+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   gBias.Release();
-   gRegime.Release();
+   ReleaseIndicators();
 }
 
 bool IsNewBar()
 {
-   datetime currentBarTime = iTime(_Symbol,ENTRY_TIMEFRAME,0);
-   if(currentBarTime<=0)
+   datetime currentBar = iTime(_Symbol,WORK_TF,0);
+   if(currentBar==0)
       return false;
-
-   if(currentBarTime==gLastBarTime)
+   if(currentBar==gLastBarTime)
       return false;
-
-   if(gLastBarTime>currentBarTime)
-   {
-      gLastBarTime = currentBarTime;
+   if(currentBar<gLastBarTime)
       return false;
-   }
-
-   gLastBarTime = currentBarTime;
+   gLastBarTime = currentBar;
    return true;
 }
 
-//+------------------------------------------------------------------+
-//| OnTick                                                           |
-//+------------------------------------------------------------------+
 void OnTick()
 {
-   gRisk.OnNewDay();
-   gRegime.Update();
-   gRisk.RefreshOpenRisk(gSizer,MAGIC_NUMBER);
-
-   if(gRisk.DailyLimitBreached())
+   datetime now = TimeCurrent();
+   if(IsNewTradingDay(now))
    {
-      Print("Daily equity loss limit breached -> closing all positions");
-      CloseAllPositions();
-      return;
-   }
-
-   if(gRisk.KillSwitchLatched())
-      return;
-
-   // MaxStaticDrawdownPercent guard: flatten and latch until the EA is restarted.
-   if(gRisk.EquityKillSwitchTriggered())
-   {
-      PrintFormat("Equity drawdown kill switch triggered (MaxStaticDrawdownPercent=%.2f%%)",MaxStaticDrawdownPercent);
-      CloseAllPositions();
-      return;
+      UpdateWeekdayExpectancies();
+      ResetDayState();
    }
 
    ManageOpenPositions();
@@ -610,275 +279,11 @@ void OnTick()
    if(!IsNewBar())
       return;
 
-   EvaluateNewBar();
+   EvaluateSignals();
 }
 
-void EvaluateNewBar()
+void SyncPositionMeta()
 {
-   datetime signalTime = gLastBarTime;
-   int recentEntries = EntriesLastSevenDays(signalTime);
-   int currentWeek = ComputeWeekId(signalTime);
-   if(currentWeek!=gFallbackWeekId)
-   {
-      gFallbackWeekId = currentWeek;
-      gFallbackUsedThisWeek = false;
-   }
-   bool useFallback = ShouldUseFallbackEntry(signalTime,recentEntries);
-   double slopeScale = (useFallback ? gConfig.fallbackSlopeScale : 1.0);
-   gBias.SetSlopeThreshold(slopeScale);
-   if(gVerboseDecisionLog)
-   {
-      PrintFormat("ENTRY TRACE: new bar %s fallback=%s slopeScale=%.2f entries7d=%d",TimeToString(signalTime,TIME_DATE|TIME_MINUTES),
-                  useFallback?"true":"false",slopeScale,recentEntries);
-   }
-   if(!gBias.Update(gRegime))
-   {
-      if(gVerboseDecisionLog)
-         PrintFormat("ENTRY TRACE: Bias update failed at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
-      return;
-   }
-
-   TrendBias bias;
-   gBias.ComputeTrendBias(bias,useFallback,useFallback);
-   RegimeBucket regimeBucket = gRegime.CurrentBucket();
-   if(gVerboseDecisionLog)
-   {
-      PrintFormat("BIAS TRACE: dir=%d strength=%d score=%.3f votesStrong L%d/S%d votesNear L%d/S%d slopes=%.3f/%.3f/%.3f th=%.3f/%.3f/%.3f",
-                  bias.direction,(int)bias.strength,bias.score,
-                  bias.votesStrongLong,bias.votesStrongShort,
-                  bias.votesNearLong,bias.votesNearShort,
-                  bias.slopeH1,bias.slopeH4,bias.slopeD1,
-                  bias.thresholdH1,bias.thresholdH4,bias.thresholdD1);
-   }
-
-   if(gConfig.requireDirectionalBias && bias.direction==0)
-   {
-      if(gVerboseDecisionLog)
-         Print("ENTRY TRACE: bias direction unresolved -> blocked by trend filter");
-      return;
-   }
-   if(gConfig.disallowNeutralEntries && bias.strength==BIAS_NEUTRAL)
-   {
-      if(gVerboseDecisionLog)
-         Print("ENTRY TRACE: neutral bias blocked by mode configuration");
-      return;
-   }
-   if(BiasMode==BIAS_STRICT)
-   {
-      if(bias.direction==0)
-      {
-         if(gVerboseDecisionLog)
-            Print("ENTRY TRACE: strict bias mode requires resolved direction");
-         return;
-      }
-      int strictDir = (bias.direction>0 ? 1 : -1);
-      if(bias.signH1!=strictDir || bias.signH4!=strictDir || bias.signD1!=strictDir)
-      {
-         if(gVerboseDecisionLog)
-            Print("ENTRY TRACE: strict bias mode requires all slopes aligned");
-         return;
-      }
-   }
-   if(useFallback && gConfig.requireTrendForFallback && (bias.strength==BIAS_NEUTRAL || bias.direction==0))
-   {
-      if(gVerboseDecisionLog)
-         Print("ENTRY TRACE: fallback disabled because bias is not trending");
-      useFallback = false;
-   }
-   if(useFallback && !gConfig.allowFallbackWhenBiasNeutral && bias.strength==BIAS_NEUTRAL)
-   {
-      if(gVerboseDecisionLog)
-         Print("ENTRY TRACE: fallback blocked for neutral bias");
-      return;
-   }
-
-   SessionWindow window;
-   if(!gSession.AllowsEntry(signalTime,window))
-   {
-      AnnotateChart("Session filter blocked entry",clrSilver);
-      if(DEBUG_MODE)
-         PrintFormat("ENTRY DEBUG: Session filter blocked entry at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
-      else if(gVerboseDecisionLog)
-         PrintFormat("ENTRY TRACE: Session filter blocked entry at %s",TimeToString(signalTime,TIME_DATE|TIME_MINUTES));
-      return;
-   }
-
-   MqlDateTime entryDt;
-   TimeToStruct(signalTime,entryDt);
-   if(!IsWeekdayAllowed(entryDt.day_of_week))
-   {
-      if(gVerboseDecisionLog)
-      {
-         PrintFormat("ENTRY TRACE: weekday %d blocked by filter",entryDt.day_of_week);
-      }
-      return;
-   }
-   if(!EntryHourAllowed(entryDt.hour))
-   {
-      if(gVerboseDecisionLog)
-      {
-         PrintFormat("ENTRY TRACE: hour %02d blocked by whitelist %02d-%02d (wrap=%s)",
-                     entryDt.hour,gHourFilterStart,gHourFilterEnd,
-                     (gHourFilterStart>gHourFilterEnd)?"true":"false");
-      }
-      return;
-   }
-
-   int openPositions = CountOpenPositions();
-   if(openPositions>=MAX_CONCURRENT_POSITIONS)
-   {
-      if(gVerboseDecisionLog)
-         PrintFormat("ENTRY TRACE: %d open positions already active (max=%d)",
-                     openPositions,MAX_CONCURRENT_POSITIONS);
-      return;
-   }
-
-   if(!gConfig.enableFallbackEntry && window!=SESSION_CORE)
-   {
-      if(gVerboseDecisionLog)
-         Print("ENTRY TRACE: fallback disabled -> only core session trades allowed");
-      return;
-   }
-
-   if(gConfig.lateEntryCutoffHour>=0)
-   {
-      int cutoff = MathMax(0,MathMin(23*60+59,gConfig.lateEntryCutoffHour*60 + gConfig.lateEntryCutoffMinute));
-      int minutesNow = entryDt.hour*60 + entryDt.min;
-      if(minutesNow>cutoff)
-      {
-         if(gVerboseDecisionLog)
-         {
-            PrintFormat("ENTRY TRACE: late cutoff %02d:%02d exceeded at %02d:%02d",cutoff/60,cutoff%60,entryDt.hour,entryDt.min);
-         }
-         return;
-      }
-   }
-
-   double scoreThreshold = (window==SESSION_CORE ? gConfig.biasScoreThresholdCore : gConfig.biasScoreThresholdEdge);
-   if(regimeBucket==REGIME_LOW)
-      scoreThreshold += gConfig.biasScoreRegimeLowBoost;
-   else if(regimeBucket==REGIME_HIGH)
-      scoreThreshold += gConfig.biasScoreRegimeHighBoost;
-   if(useFallback)
-      scoreThreshold *= gConfig.fallbackScoreDiscount;
-
-   if(!gConfig.bypassSlopeScoreCheck)
-   {
-      double biasScoreAbs = MathAbs(bias.score);
-      if(biasScoreAbs < scoreThreshold)
-      {
-         if(gVerboseDecisionLog)
-         {
-            PrintFormat("ENTRY TRACE: bias score %.4f below threshold %.4f (regime=%d window=%d)",biasScoreAbs,scoreThreshold,(int)regimeBucket,(int)window);
-         }
-         return;
-      }
-   }
-
-   bool directionResolved = (bias.direction!=0);
-   if(!gConfig.bypassSlopeVoteCheck)
-   {
-      int slopeVotes = 0;
-      if(MathAbs(bias.slopeH1)>=gConfig.biasSlopeConfirmH1) slopeVotes++;
-      if(MathAbs(bias.slopeH4)>=gConfig.biasSlopeConfirmH4) slopeVotes++;
-      if(MathAbs(bias.slopeD1)>=gConfig.biasSlopeConfirmD1) slopeVotes++;
-
-      if(directionResolved && slopeVotes<2 && bias.strength!=BIAS_STRONG && !useFallback)
-      {
-         if(gVerboseDecisionLog)
-         {
-            PrintFormat("ENTRY TRACE: slope confirmations=%d below requirement for bias strength %d",slopeVotes,(int)bias.strength);
-         }
-         return;
-      }
-
-      if(directionResolved && !useFallback)
-      {
-         if(bias.direction>0 && bias.slopeD1 < gConfig.biasSlopeConfirmD1)
-         {
-            if(gVerboseDecisionLog)
-               Print("ENTRY TRACE: D1 slope insufficient for long bias");
-            return;
-         }
-         if(bias.direction<0 && (-bias.slopeD1) < gConfig.biasSlopeConfirmD1)
-         {
-            if(gVerboseDecisionLog)
-               Print("ENTRY TRACE: D1 slope insufficient for short bias");
-            return;
-         }
-      }
-   }
-
-   if(regimeBucket==REGIME_LOW && bias.strength==BIAS_NEUTRAL && !useFallback)
-   {
-      if(gVerboseDecisionLog)
-         Print("ENTRY TRACE: neutral bias blocked in low-vol regime");
-      return;
-   }
-
-   MqlRates rates[];
-   ArraySetAsSeries(rates,true);
-   int barsNeeded = MathMax(6,gConfig.breakoutRangeBars+2);
-   int copied = CopyRates(_Symbol,ENTRY_TIMEFRAME,0,barsNeeded,rates);
-   if(copied<3)
-   {
-      if(gVerboseDecisionLog)
-         PrintFormat("ENTRY TRACE: insufficient rate data copied=%d",copied);
-      return;
-   }
-
-   EntrySignal signal;
-   bool allowAggressiveBoost = (gConfig.allowAggressiveEntries && RecentPnLPositive());
-   if(!gEntry.Evaluate(bias,gRegime,window,rates,copied,useFallback,useFallback,gVerboseDecisionLog,allowAggressiveBoost,signal))
-   {
-      if(gVerboseDecisionLog)
-         Print("ENTRY TRACE: EntryEngine returned no signal");
-      return;
-   }
-
-   double weekdayRiskScale = WeekdayRiskScaleValue(entryDt.day_of_week);
-   if(weekdayRiskScale!=1.0)
-   {
-      signal.riskScale *= weekdayRiskScale;
-      if(gVerboseDecisionLog)
-      {
-         PrintFormat("ENTRY TRACE: weekday risk scale %.2f applied -> combined scale %.2f",weekdayRiskScale,signal.riskScale);
-      }
-   }
-   if(signal.riskScale<=0.0)
-   {
-      if(gVerboseDecisionLog)
-         Print("ENTRY TRACE: effective risk scale <= 0 after weekday adjustment");
-      return;
-   }
-
-   if(HasDirectionalPosition(signal.direction))
-   {
-      AnnotateChart("Position in same direction already open",clrSilver);
-      return;
-   }
-
-   AttemptEntry(signal);
-}
-
-//+------------------------------------------------------------------+
-//| Manage open positions                                            |
-//+------------------------------------------------------------------+
-// ManageOpenPositions delegates all R-based exit logic to the ExitEngine.
-void ManageOpenPositions()
-{
-   gExit.Manage(gBroker,gSizer,gRegime);
-}
-
-//+------------------------------------------------------------------+
-//| Check for open position in direction                             |
-//+------------------------------------------------------------------+
-bool HasDirectionalPosition(const int direction)
-{
-   if(direction==0)
-      return false;
-
-   ENUM_POSITION_TYPE need = (direction>0 ? POSITION_TYPE_BUY : POSITION_TYPE_SELL);
    for(int i=PositionsTotal()-1;i>=0;i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -886,159 +291,491 @@ bool HasDirectionalPosition(const int direction)
          continue;
       if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
          continue;
-      if((ulong)PositionGetInteger(POSITION_MAGIC)!=MAGIC_NUMBER)
+      if(PositionGetInteger(POSITION_MAGIC)!=(long)PropagationMagic)
          continue;
-      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE)!=need)
+      double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      double stop = PositionGetDouble(POSITION_SL);
+      if(stop<=0.0)
          continue;
-      return true;
+      double stopDistance = MathAbs(entry-stop);
+      double tickValue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+      double tickSize = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      double riskPerLot = (tickSize>0.0 ? stopDistance/tickSize*tickValue : 0.0);
+      double riskMoney = riskPerLot*volume;
+      datetime entryTime = (datetime)PositionGetInteger(POSITION_TIME);
+      gMeta.Ensure(ticket,riskMoney,CalcATR(),entryTime,stop);
+   }
+}
+
+void ManageOpenPositions()
+{
+   SyncPositionMeta();
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC)!=(long)PropagationMagic)
+         continue;
+      UpdateStops(ticket);
+      ApplyTimeExits(ticket);
+   }
+}
+
+void ApplyTimeExits(const ulong ticket)
+{
+   PositionMeta *meta = gMeta.Get(ticket);
+   if(meta==NULL)
+      return;
+   double profit = PositionGetDouble(POSITION_PROFIT);
+   double rNow = (meta.riskMoney>0.0 ? profit/meta.riskMoney : 0.0);
+   meta.minR = MathMin(meta.minR,rNow);
+   double minutesInTrade = (TimeCurrent()-meta.entryTime)/60.0;
+   if(minutesInTrade>=NoProgressMinutes && rNow<MinProgressR)
+   {
+      PrintFormat("Time exit: %.2fR after %.0f minutes",rNow,minutesInTrade);
+      gTrader.PositionClose(ticket);
+      return;
+   }
+   if(minutesInTrade<=EarlyMAE_Minutes && meta.minR<=-EarlyMAE_R)
+   {
+      PrintFormat("Early MAE exit: %.2fR",meta.minR);
+      gTrader.PositionClose(ticket);
+   }
+}
+
+void EvaluateSignals()
+{
+   if(!AllowedToTradeNow())
+      return;
+   if(HasOpenPosition())
+      return;
+
+   double closes[3];
+   ArraySetAsSeries(closes,true);
+   if(CopyClose(_Symbol,WORK_TF,1,3,closes)<3)
+      return;
+   double highs[3];
+   double lows[3];
+   ArraySetAsSeries(highs,true);
+   ArraySetAsSeries(lows,true);
+   CopyHigh(_Symbol,WORK_TF,1,3,highs);
+   CopyLow(_Symbol,WORK_TF,1,3,lows);
+
+   bool upTrend = TrendUp();
+   bool downTrend = TrendDown();
+   double adx=0.0;
+   double adxBuf[1];
+   if(CopyBuffer(gAdxHandle,0,0,1,adxBuf)>0)
+      adx = adxBuf[0];
+   bool strongTrend = (adx>=ADX_MinTrend || ADX_MinTrend<=0.0);
+   bool allowCounter = (adx<=ADX_MaxMR);
+
+   int direction = 0;
+   if(UseTrendFilter)
+   {
+      if(upTrend && strongTrend && AllowLongs && closes[0]>highs[1])
+         direction = 1;
+      else if(downTrend && strongTrend && AllowShorts && closes[0]<lows[1])
+         direction = -1;
+      else if(allowCounter)
+      {
+         double emaFast[1];
+         CopyBuffer(gEmaFastH1,0,0,1,emaFast);
+         if(!upTrend && AllowLongs && closes[0]>emaFast[0])
+            direction = 1;
+         else if(!downTrend && AllowShorts && closes[0]<emaFast[0])
+            direction = -1;
+      }
+   }
+   else
+   {
+      if(AllowLongs && closes[0]>highs[1])
+         direction = 1;
+      else if(AllowShorts && closes[0]<lows[1])
+         direction = -1;
+   }
+
+   if(direction==0)
+      return;
+
+   double atr = CalcATR();
+   if(atr<=0.0)
+      return;
+   double entryPrice = (direction>0 ? SymbolInfoDouble(_Symbol,SYMBOL_ASK) : SymbolInfoDouble(_Symbol,SYMBOL_BID));
+   double sl = (direction>0 ? entryPrice-atr*ATR_SL_Mult : entryPrice+atr*ATR_SL_Mult);
+   double tp = (direction>0 ? entryPrice+atr*ATR_TP_Mult : entryPrice-atr*ATR_TP_Mult);
+   double volume = CalcPositionSizeByRisk(entryPrice,sl,direction);
+   if(volume<=0.0)
+      return;
+   bool ok = (direction>0 ? gTrader.Buy(volume,_Symbol,entryPrice,sl,tp,TRADE_COMMENT)
+                          : gTrader.Sell(volume,_Symbol,entryPrice,sl,tp,TRADE_COMMENT));
+   if(ok)
+      PrintFormat("Opened %s %.2f lots",direction>0?"BUY":"SELL",volume);
+   else
+      PrintFormat("Entry failed %d",GetLastError());
+}
+
+bool HasOpenPosition()
+{
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetInteger(POSITION_MAGIC)!=(long)PropagationMagic)
+         continue;
+      if(PositionGetString(POSITION_SYMBOL)==_Symbol)
+         return true;
    }
    return false;
 }
 
-//+------------------------------------------------------------------+
-//| Attempt to open trade                                            |
-//+------------------------------------------------------------------+
-// AttemptEntry performs spread/risk checks, position sizing and order placement for validated signals.
-void AttemptEntry(const EntrySignal &signal)
+bool AllowedToTradeNow()
 {
-   if(DEBUG_MODE)
+   string reason="";
+   bool allow = AllowedToTradeNowInternal(reason);
+   if(!allow)
    {
-      string dirStr = DirectionToString(signal.direction);
-      string sessionStr = SessionWindowToString(signal.session,signal.fallbackRelaxed);
-      PrintFormat("ENTRY DEBUG: signal dir=%s score=%.2f biasDir=%d biasScore=%.2f slopes=H1 %.3f H4 %.3f D1 %.3f session=%s fallback=%s",
-                  dirStr,signal.quality,signal.biasDirection,signal.biasScore,
-                  signal.biasSlopeH1,signal.biasSlopeH4,signal.biasSlopeD1,
-                  sessionStr,signal.fallbackRelaxed?"true":"false");
-      PrintFormat("ENTRY DEBUG: AttemptEntry dir=%d entry=%.2f stop=%.2f quality=%.2f biasStrength=%d riskScale=%.2f fallback=%s",
-                  signal.direction,signal.entryPrice,signal.stopLoss,signal.quality,(int)signal.biasStrength,
-                  signal.riskScale,signal.fallbackRelaxed?"true":"false");
+      gLastBlockReason = reason;
+      Print(reason);
+      Comment(reason);
    }
-   double stopPoints = gSizer.StopDistancePoints(signal.entryPrice,signal.stopLoss);
-   if(stopPoints<=0.0)
+   else
    {
-      if(DEBUG_MODE)
-         Print("ENTRY DEBUG: stopPoints <= 0 -> abort entry");
-      return;
+      gLastBlockReason = "";
+      Comment("Trading enabled");
    }
+   return allow;
+}
 
-   if(DEBUG_MODE)
-      PrintFormat("ENTRY DEBUG: computed stopPoints=%.1f",stopPoints);
-
+bool AllowedToTradeNowInternal(string &reason)
+{
+   datetime now = TimeCurrent();
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   if(MaxStaticDrawdownPercent>0.0)
+   {
+      double floorEquity = gInitialEquity*(1.0-MaxStaticDrawdownPercent/100.0);
+      if(equity<=floorEquity)
+      {
+         reason = "Static DD limit";
+         CloseAllPositions();
+         return false;
+      }
+   }
+   if(MaxDailyLossPercent>0.0)
+   {
+      double floorDaily = gDayStartEquity*(1.0-MaxDailyLossPercent/100.0);
+      if(equity<=floorDaily)
+      {
+         gDailyLossHalt = true;
+         reason = "Daily loss limit";
+         CloseAllPositions();
+         return false;
+      }
+   }
+   if(gDailyLossHalt)
+   {
+      reason = "Daily halt";
+      return false;
+   }
+   MqlDateTime dt;
+   TimeToStruct(now,dt);
+   if(dt.day_of_week==0 || dt.day_of_week==6)
+   {
+      reason = "Weekend";
+      return false;
+   }
+   bool dayAllowed = ((dt.day_of_week==1 && AllowMondayTrading) ||
+                      (dt.day_of_week==2 && AllowTuesdayTrading) ||
+                      (dt.day_of_week==3 && AllowWednesdayTrading) ||
+                      (dt.day_of_week==4 && AllowThursdayTrading) ||
+                      (dt.day_of_week==5 && AllowFridayTrading));
+   if(!dayAllowed)
+   {
+      reason = "Weekday blocked";
+      return false;
+   }
+   if(MaxLosingTradesPerDay>0 && gLosingTradesToday>=MaxLosingTradesPerDay)
+   {
+      reason = "Loss count guard";
+      return false;
+   }
+   if(gSumRToday<=MaxRPerDay)
+   {
+      reason = "R guard";
+      return false;
+   }
+   if(RestrictEntryHours)
+   {
+      if(dt.hour<AllowedEntryHourStart || dt.hour>AllowedEntryHourEnd)
+      {
+         reason = "Hour whitelist";
+         return false;
+      }
+   }
+   double minute = dt.hour*60 + dt.min;
+   double startMin = DecimalHourToMinutes(StartHour);
+   double endMin = DecimalHourToMinutes(EndHour);
+   if(minute<startMin || minute>endMin)
+   {
+      reason = "Session closed";
+      return false;
+   }
    double bid = SymbolInfoDouble(_Symbol,SYMBOL_BID);
    double ask = SymbolInfoDouble(_Symbol,SYMBOL_ASK);
-   double point = SymbolInfoDouble(_Symbol,SYMBOL_POINT);
-   if(point<=0.0)
-      point = _Point;
-   if(point>0.0)
+   double spreadPts = (ask-bid)/_Point;
+   if(spreadPts>MaxSpreadPoints)
    {
-      int spreadPts = (int)MathRound((ask-bid)/point);
-      if(spreadPts>MAX_SPREAD_POINTS)
+      reason = StringFormat("Spread %.1f > %d",spreadPts,MaxSpreadPoints);
+      return false;
+   }
+   if(UseNewsFilter && NewsBlockActive())
+   {
+      reason = "News block";
+      return false;
+   }
+   return true;
+}
+
+bool TrendUp()
+{
+   double fastH1[1],slowH1[1],fastH4[1],slowH4[1];
+   if(CopyBuffer(gEmaFastH1,0,0,1,fastH1)<=0) return false;
+   if(CopyBuffer(gEmaSlowH1,0,0,1,slowH1)<=0) return false;
+   if(CopyBuffer(gEmaFastH4,0,0,1,fastH4)<=0) return false;
+   if(CopyBuffer(gEmaSlowH4,0,0,1,slowH4)<=0) return false;
+   return (fastH1[0]>slowH1[0] && fastH4[0]>slowH4[0]);
+}
+
+bool TrendDown()
+{
+   double fastH1[1],slowH1[1],fastH4[1],slowH4[1];
+   if(CopyBuffer(gEmaFastH1,0,0,1,fastH1)<=0) return false;
+   if(CopyBuffer(gEmaSlowH1,0,0,1,slowH1)<=0) return false;
+   if(CopyBuffer(gEmaFastH4,0,0,1,fastH4)<=0) return false;
+   if(CopyBuffer(gEmaSlowH4,0,0,1,slowH4)<=0) return false;
+   return (fastH1[0]<slowH1[0] && fastH4[0]<slowH4[0]);
+}
+
+bool NewsBlockActive()
+{
+   if(!UseNewsFilter)
+      return false;
+   datetime now = TimeCurrent();
+   datetime from = now-1800;
+   datetime to = now+1800;
+   if(!CalendarSelect(from,to))
+      return false;
+   MqlCalendarEvent ev;
+   for(int i=0;i<CalendarEventTotal();i++)
+   {
+      if(!CalendarEventByIndex(i,ev))
+         continue;
+      if(ev.importance!=CALENDAR_IMPORTANCE_HIGH)
+         continue;
+      bool relevant = (ev.currency=="USD" || StringFind(StringToUpper(ev.title),"GOLD")>=0);
+      if(!relevant)
+         continue;
+      if(ev.time>=from && ev.time<=to)
+         return true;
+   }
+   return false;
+}
+
+double CalcATR()
+{
+   double buffer[1];
+   if(CopyBuffer(gAtrHandle,0,0,1,buffer)<=0)
+      return 0.0;
+   return buffer[0];
+}
+
+void UpdateWeekdayExpectancies()
+{
+   datetime to = TimeCurrent();
+   datetime from = to - (datetime)(NWeeks*7*86400);
+   if(!HistorySelect(from,to))
+   {
+      gUseDynamicWeights = false;
+      return;
+   }
+   double profit[7];
+   int trades[7];
+   ArrayInitialize(profit,0.0);
+   ArrayInitialize(trades,0);
+   int total = HistoryDealsTotal();
+   for(int i=0;i<total;i++)
+   {
+      ulong deal = HistoryDealGetTicket(i);
+      if(HistoryDealGetInteger(deal,DEAL_MAGIC)!=(long)PropagationMagic)
+         continue;
+      if(HistoryDealGetString(deal,DEAL_SYMBOL)!=_Symbol)
+         continue;
+      if((ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal,DEAL_ENTRY)!=DEAL_ENTRY_OUT)
+         continue;
+      datetime exitTime = (datetime)HistoryDealGetInteger(deal,DEAL_TIME);
+      MqlDateTime dt;
+      TimeToStruct(exitTime,dt);
+      double p = HistoryDealGetDouble(deal,DEAL_PROFIT)+
+                 HistoryDealGetDouble(deal,DEAL_COMMISSION)+
+                 HistoryDealGetDouble(deal,DEAL_SWAP);
+      if(dt.day_of_week>=0 && dt.day_of_week<7)
       {
-         if(ENABLE_CHART_ANNOTATIONS)
-            AnnotateChart("Spread zu hoch",clrTomato);
-         if(DEBUG_MODE)
-            PrintFormat("ENTRY DEBUG: spreadPts=%d > MAX_SPREAD_POINTS=%d -> skip entry",spreadPts,MAX_SPREAD_POINTS);
+         profit[dt.day_of_week]+=p;
+         trades[dt.day_of_week]++;
+      }
+   }
+   int totalTrades = 0;
+   double minExp = 1e9;
+   double maxExp = -1e9;
+   for(int d=0;d<7;d++)
+   {
+      gWeekdayStats[d].trades = trades[d];
+      gWeekdayStats[d].expectancy = (trades[d]>0 ? profit[d]/trades[d] : 0.0);
+      if(trades[d]>0)
+      {
+         totalTrades += trades[d];
+         minExp = MathMin(minExp,gWeekdayStats[d].expectancy);
+         maxExp = MathMax(maxExp,gWeekdayStats[d].expectancy);
+      }
+   }
+   if(totalTrades<10 || minExp==1e9)
+   {
+      gUseDynamicWeights = false;
+      return;
+   }
+   if(MathAbs(maxExp-minExp)<1e-6)
+      maxExp = minExp+1e-6;
+   gUseDynamicWeights = true;
+   for(int d=0;d<7;d++)
+   {
+      if(gWeekdayStats[d].trades>0)
+      {
+         double norm = (gWeekdayStats[d].expectancy-minExp)/(maxExp-minExp);
+         gWeekdayStats[d].expectancy = 0.5 + norm*(1.1-0.5);
+      }
+      else
+         gWeekdayStats[d].expectancy = 1.0;
+   }
+}
+
+double WeekdayWeight(const int dayOfWeek)
+{
+   if(gUseDynamicWeights)
+   {
+      if(dayOfWeek>=0 && dayOfWeek<7)
+         return MathMax(0.5,MathMin(1.1,gWeekdayStats[dayOfWeek].expectancy));
+      return 1.0;
+   }
+   if(dayOfWeek>=0 && dayOfWeek<7 && gFallbackWeights[dayOfWeek]>0.0)
+      return gFallbackWeights[dayOfWeek];
+   return 1.0;
+}
+
+double CalcPositionSizeByRisk(const double entryPrice,const double stopPrice,const int direction)
+{
+   double riskPercent = MathMax(0.0,RiskPerTradePercent);
+   (void)direction;
+   if(riskPercent<=0.0)
+      return 0.0;
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(),dt);
+   double weight = WeekdayWeight(dt.day_of_week);
+   double riskMoney = equity*(riskPercent/100.0)*weight;
+   double stopDistance = MathAbs(entryPrice-stopPrice);
+   double tickValue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+   if(tickValue<=0.0 || tickSize<=0.0 || stopDistance<=0.0)
+      return 0.0;
+   double riskPerLot = stopDistance/tickSize*tickValue;
+   double volume = riskMoney/riskPerLot;
+   double step = SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
+   double minVol = SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
+   double maxVol = SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MAX);
+   if(step<=0.0) step = 0.01;
+   volume = MathFloor(volume/step)*step;
+   volume = MathMax(minVol,MathMin(maxVol,volume));
+   if(volume<minVol)
+      return 0.0;
+   int digits = (int)MathCeil(-MathLog10(step));
+   return NormalizeDouble(volume,digits);
+}
+
+void UpdateStops(const ulong ticket)
+{
+   if(!PositionSelectByTicket(ticket))
+      return;
+   PositionMeta *meta = gMeta.Get(ticket);
+   if(meta==NULL)
+      return;
+   double atr = CalcATR();
+   if(atr<=0.0)
+      return;
+   ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+   double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+   double price = PositionGetDouble(POSITION_PRICE_CURRENT);
+   double stop = PositionGetDouble(POSITION_SL);
+   double move = (type==POSITION_TYPE_BUY ? price-entry : entry-price);
+   double trigger = Breakeven_ATR*atr;
+   if(trigger>0.0 && move>=trigger)
+      meta.movedToBE = true;
+   double desiredSL = stop;
+   if(meta.movedToBE)
+   {
+      desiredSL = entry;
+      double step = Trail_ATR_Step*atr;
+      if(step>0.0)
+      {
+         if(type==POSITION_TYPE_BUY)
+            desiredSL = MathMax(desiredSL,price-step);
          else
-            PrintFormat("Spread %dpt > MAX_SPREAD_POINTS %d -> Entry verworfen",spreadPts,MAX_SPREAD_POINTS);
-         return;
-      }
-      else if(DEBUG_MODE)
-      {
-         PrintFormat("ENTRY DEBUG: spreadPts=%d within limit %d",spreadPts,MAX_SPREAD_POINTS);
+            desiredSL = MathMin(desiredSL,price+step);
       }
    }
-
-   double volume=0.0;
-   double riskPercent=0.0;
-   if(!gRisk.AllowNewTrade(stopPoints,gSizer,gRegime,volume,riskPercent,signal.riskScale))
-   {
-      AnnotateChart("Risk guard prevented entry",clrTomato);
-      if(DEBUG_MODE)
-         Print("ENTRY DEBUG: RiskEngine.AllowNewTrade() returned false");
-      return;
-   }
-
-   if(DEBUG_MODE)
-      PrintFormat("ENTRY DEBUG: proposed volume=%.4f riskPercent=%.2f%%",volume,riskPercent);
-
-   if(!gRisk.HasSufficientMargin(signal.direction,volume,signal.entryPrice))
-   {
-      if(ENABLE_CHART_ANNOTATIONS)
-         AnnotateChart("Margin check failed",clrTomato);
-      if(DEBUG_MODE)
-         Print("ENTRY DEBUG: Margin check failed -> entry skipped");
-      else
-         Print("Margin check failed -> entry skipped");
-      return;
-   }
-
-   double tp = 0.0;
-   if(gConfig.useHardFinalTP)
-   {
-      tp = signal.entryPrice + signal.direction*gConfig.finalTarget_R*stopPoints*point;
-   }
-   if(!gBroker.OpenPosition(signal.direction,volume,signal.entryPrice,signal.stopLoss,tp))
-   {
-      if(DEBUG_MODE)
-         PrintFormat("ENTRY DEBUG: gBroker.OpenPosition() failed dir=%d",signal.direction);
-      else
-         PrintFormat("Order open failed for direction %d",signal.direction);
-      return;
-   }
-
-   for(int i=PositionsTotal()-1;i>=0;i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(!PositionSelectByTicket(ticket))
-         continue;
-      if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
-         continue;
-      if((ulong)PositionGetInteger(POSITION_MAGIC)!=MAGIC_NUMBER)
-         continue;
-      gExit.Register(ticket,signal,stopPoints,volume,riskPercent,gBiasLabel);
-      gRisk.OnTradeOpened(riskPercent);
-      AnnotateChart(StringFormat("Opened %s %.2flots",signal.direction>0?"BUY":"SELL",volume),clrGreen);
-      if(DEBUG_MODE)
-         PrintFormat("ENTRY DEBUG: Opened position volume=%.2f direction=%d",volume,signal.direction);
-      RecordEntryTime(TimeCurrent(),signal.fallbackRelaxed);
-      break;
-   }
+   if(type==POSITION_TYPE_BUY && desiredSL>stop+_Point)
+      gTrader.PositionModify(ticket,desiredSL,PositionGetDouble(POSITION_TP));
+   else if(type==POSITION_TYPE_SELL && desiredSL<stop-_Point)
+      gTrader.PositionModify(ticket,desiredSL,PositionGetDouble(POSITION_TP));
 }
 
-string SessionWindowToString(const SessionWindow window,const bool fallback)
+void UpdateRiskCountersOnClose(const double profit,const double riskMoney)
 {
-   string label = "NONE";
-   if(window==SESSION_CORE)
-      label = "CORE";
-   else if(window==SESSION_EDGE)
-      label = "EDGE";
-   if(fallback && window!=SESSION_NONE)
-      label = label + " (FALLBACK)";
-   return label;
+   double r = (riskMoney>0.0 ? profit/riskMoney : 0.0);
+   gSumRToday += r;
+   if(profit<0.0)
+      gLosingTradesToday++;
 }
 
-string DirectionToString(const int direction)
+void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)
 {
-   if(direction>0)
-      return "LONG";
-   if(direction<0)
-      return "SHORT";
-   return "FLAT";
-}
-
-//+------------------------------------------------------------------+
-//| Chart annotation helper                                          |
-//+------------------------------------------------------------------+
-void AnnotateChart(const string message,const color col)
-{
-   if(!ENABLE_CHART_ANNOTATIONS)
+   if(trans.type!=TRADE_TRANSACTION_DEAL_ADD)
       return;
-   Comment(message);
+   ulong deal = trans.deal;
+   if(deal==0)
+      return;
+   if(HistoryDealGetInteger(deal,DEAL_MAGIC)!=(long)PropagationMagic)
+      return;
+   if(HistoryDealGetString(deal,DEAL_SYMBOL)!=_Symbol)
+      return;
+   ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal,DEAL_ENTRY);
+   if(entryType!=DEAL_ENTRY_OUT)
+      return;
+   ulong positionId = (ulong)HistoryDealGetInteger(deal,DEAL_POSITION_ID);
+   PositionMeta *meta = gMeta.Get(positionId);
+   if(meta==NULL)
+      return;
+   double profit = HistoryDealGetDouble(deal,DEAL_PROFIT)+
+                   HistoryDealGetDouble(deal,DEAL_COMMISSION)+
+                   HistoryDealGetDouble(deal,DEAL_SWAP);
+   UpdateRiskCountersOnClose(profit,meta.riskMoney);
+   gMeta.Remove(positionId);
 }
 
-//+------------------------------------------------------------------+
-//| Close all positions                                              |
-//+------------------------------------------------------------------+
 void CloseAllPositions()
 {
    for(int i=PositionsTotal()-1;i>=0;i--)
@@ -1046,215 +783,10 @@ void CloseAllPositions()
       ulong ticket = PositionGetTicket(i);
       if(!PositionSelectByTicket(ticket))
          continue;
-      if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
-         continue;
-      if((ulong)PositionGetInteger(POSITION_MAGIC)!=MAGIC_NUMBER)
-         continue;
-      gBroker.ClosePosition(ticket);
-   }
-}
-
-void RecordEntryTime(const datetime entryTime,const bool fallbackTrade)
-{
-   CleanupEntryHistory(entryTime);
-   int size = ArraySize(gEntryHistory);
-   ArrayResize(gEntryHistory,size+1);
-   gEntryHistory[size] = entryTime;
-   if(fallbackTrade)
-      gFallbackUsedThisWeek = true;
-}
-
-void CleanupEntryHistory(const datetime reference)
-{
-   int size = ArraySize(gEntryHistory);
-   if(size<=0)
-      return;
-   datetime cutoff = reference - 7*24*3600;
-   int writeIndex = 0;
-   for(int i=0;i<size;i++)
-   {
-      if(gEntryHistory[i]>=cutoff)
-         gEntryHistory[writeIndex++] = gEntryHistory[i];
-   }
-   if(writeIndex!=size)
-      ArrayResize(gEntryHistory,writeIndex);
-}
-
-int EntriesLastSevenDays(const datetime reference)
-{
-   CleanupEntryHistory(reference);
-   return ArraySize(gEntryHistory);
-}
-
-int ComputeWeekId(const datetime time)
-{
-   if(time<=0)
-      return -1;
-   MqlDateTime dt;
-   TimeToStruct(time,dt);
-   int week = (int)MathFloor((double)dt.day_of_year/7.0);
-   return dt.year*100 + week;
-}
-
-bool ShouldUseFallbackEntry(const datetime signalTime,const int recentEntries)
-{
-   if(!gConfig.enableFallbackEntry)
-      return false;
-   if(signalTime<=0)
-      return false;
-   if(gFallbackUsedThisWeek)
-      return false;
-   MqlDateTime dt;
-   TimeToStruct(signalTime,dt);
-   if(!gConfig.enableWeekdayFallback)
-   {
-      if(recentEntries>=2)
-         return false;
-      if(dt.day_of_week!=5)
-         return false;
-      if(dt.hour<gConfig.fallbackMinHour)
-         return false;
-   }
-   else
-   {
-      if(dt.day_of_week==0 || dt.day_of_week==6)
-         return false;
-      if(dt.hour<gConfig.fallbackMinHour)
-         return false;
-      if(gConfig.fallbackMaxPer7D>0 && recentEntries>=gConfig.fallbackMaxPer7D)
-         return false;
-   }
-   return true;
-}
-
-void ResetRecentPnL()
-{
-   for(int i=0;i<RECENT_TRADE_WINDOW;i++)
-      gRecentTradePnL[i] = 0.0;
-   gRecentTradeCount = 0;
-}
-
-void RecordClosedTradePnL(const double profit)
-{
-   if(RECENT_TRADE_WINDOW<=0)
-      return;
-   if(gRecentTradeCount<RECENT_TRADE_WINDOW)
-   {
-      gRecentTradePnL[gRecentTradeCount++] = profit;
-   }
-   else
-   {
-      for(int i=1;i<RECENT_TRADE_WINDOW;i++)
-         gRecentTradePnL[i-1] = gRecentTradePnL[i];
-      gRecentTradePnL[RECENT_TRADE_WINDOW-1] = profit;
-   }
-}
-
-bool RecentPnLPositive()
-{
-   // Used to temporarily relax quality thresholds when the last trades netted profit.
-   double sum = 0.0;
-   for(int i=0;i<gRecentTradeCount;i++)
-      sum += gRecentTradePnL[i];
-   return (gRecentTradeCount>0 && sum>0.0);
-}
-
-bool IsWeekdayAllowed(const int dayOfWeek)
-{
-   switch(dayOfWeek)
-   {
-      case 1: return AllowMondayTrading;
-      case 2: return AllowTuesdayTrading;
-      case 3: return AllowWednesdayTrading;
-      case 4: return AllowThursdayTrading;
-      case 5: return AllowFridayTrading;
-      default: return false;
-   }
-}
-
-bool EntryHourAllowed(const int hour)
-{
-   if(!gUseHourWhitelist)
-      return true;
-   int clampedHour = MathMax(0,MathMin(23,hour));
-   if(gHourFilterStart==gHourFilterEnd)
-      return (clampedHour==gHourFilterStart);
-   if(gHourFilterStart<gHourFilterEnd)
-      return (clampedHour>=gHourFilterStart && clampedHour<=gHourFilterEnd);
-   return (clampedHour>=gHourFilterStart || clampedHour<=gHourFilterEnd);
-}
-
-double WeekdayRiskScaleValue(const int dayOfWeek)
-{
-   switch(dayOfWeek)
-   {
-      case 1: return MathMax(0.0,MondayRiskScale);
-      case 2: return MathMax(0.0,TuesdayRiskScale);
-      case 3: return MathMax(0.0,WednesdayRiskScale);
-      case 4: return MathMax(0.0,ThursdayRiskScale);
-      case 5: return MathMax(0.0,FridayRiskScale);
-      default: return 0.0;
-   }
-}
-
-int CountOpenPositions()
-{
-   int count = 0;
-   for(int i=PositionsTotal()-1;i>=0;i--)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(!PositionSelectByTicket(ticket))
+      if(PositionGetInteger(POSITION_MAGIC)!=(long)PropagationMagic)
          continue;
       if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
          continue;
-      if((ulong)PositionGetInteger(POSITION_MAGIC)!=MAGIC_NUMBER)
-         continue;
-      count++;
+      gTrader.PositionClose(ticket);
    }
-   return count;
-}
-
-//+------------------------------------------------------------------+
-//| Trade transaction                                                |
-//+------------------------------------------------------------------+
-void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &request,const MqlTradeResult &result)
-{
-   if(trans.type==TRADE_TRANSACTION_DEAL_ADD && trans.deal>0)
-   {
-      ulong deal = trans.deal;
-      ENUM_DEAL_ENTRY entryType = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal,DEAL_ENTRY);
-      double profit = HistoryDealGetDouble(deal,DEAL_PROFIT);
-      ulong positionId = (ulong)HistoryDealGetInteger(deal,DEAL_POSITION_ID);
-      if(entryType==DEAL_ENTRY_OUT)
-      {
-         bool positionStillOpen = PositionSelectByTicket(positionId);
-         double riskRemoved = 0.0;
-         if(!positionStillOpen)
-         {
-            double exitPrice = HistoryDealGetDouble(deal,DEAL_PRICE);
-            datetime exitTime = (datetime)HistoryDealGetInteger(deal,DEAL_TIME);
-            double commission = HistoryDealGetDouble(deal,DEAL_COMMISSION);
-            double swap = HistoryDealGetDouble(deal,DEAL_SWAP);
-            riskRemoved = gExit.OnPositionClosed(positionId,exitPrice,exitTime,profit,commission,swap);
-         }
-         if(!positionStillOpen)
-         {
-            gRisk.OnTradeClosed(profit,riskRemoved);
-            RecordClosedTradePnL(profit);
-         }
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| OnTester acceptance checks                                       |
-//+------------------------------------------------------------------+
-double OnTester()
-{
-   double profitFactor = TesterStatistics((ENUM_STATISTICS)STAT_PROFIT_FACTOR);
-   double netProfit = TesterStatistics((ENUM_STATISTICS)STAT_PROFIT);
-   double maxDD = TesterStatistics((ENUM_STATISTICS)STAT_EQUITY_DDRELATIVE);
-   if(maxDD<=0.0)
-      return profitFactor;
-   return (netProfit>0.0 ? profitFactor/maxDD : profitFactor/(maxDD+1.0));
 }
