@@ -569,16 +569,16 @@ bool NewsBlockActive()
 {
    if(!UseNewsFilter)
       return false;
-#if !EA_CALENDAR_SUPPORTED
-   static bool warned=false;
-   if(!warned)
-   {
-      Print("News filter requested but economic calendar feed is unavailable in this build. Define EA_USE_NATIVE_CALENDAR if your terminal provides <Calendar/Calendar.mqh>.");
-      warned=true;
-   }
-   return false;
+#if EA_CALENDAR_SUPPORTED==0
+     static bool warned=false;
+     if(!warned)
+     {
+        Print("News filter requested but economic calendar feed is unavailable in this build. Define EA_USE_NATIVE_CALENDAR if your terminal provides <Calendar/Calendar.mqh>.");
+        warned=true;
+     }
+     return false;
 #else
-   datetime now = TimeCurrent();
+     datetime now = TimeCurrent();
    datetime from = now-1800;
    datetime to = now+1800;
    if(!CalendarSelect(from,to))

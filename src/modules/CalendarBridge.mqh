@@ -1,4 +1,5 @@
-#pragma once
+#ifndef __CALENDAR_BRIDGE_MQH__
+#define __CALENDAR_BRIDGE_MQH__
 
 //+------------------------------------------------------------------+
 //| Calendar bridge                                                  |
@@ -14,9 +15,11 @@
 //| economic calendar filter.                                        |
 //+------------------------------------------------------------------+
 
-#if defined(EA_USE_NATIVE_CALENDAR)
+#ifdef EA_USE_NATIVE_CALENDAR
    #include <Calendar/Calendar.mqh>
    #define EA_CALENDAR_SUPPORTED 1
 #else
    #define EA_CALENDAR_SUPPORTED 0
 #endif
+
+#endif // __CALENDAR_BRIDGE_MQH__
