@@ -76,11 +76,16 @@ input int           SessionEndHour           = 14;    // broker time, minutes fi
 input ENUM_BiasMode BiasMode                 = BIAS_BALANCED;
 input ENUM_RRProfile RRProfile               = RR_BALANCED;
 input bool          EnableFallbackEntries    = true;  // allow relaxed fallback entries
-input bool          AllowMondayTrading       = false; // disable Monday trades (largest weekly loss in tests)
+input bool          AllowMondayTrading       = true;  // Mondays stay tradable but may be risk-reduced
 input bool          AllowTuesdayTrading      = true;  // keep Tuesday active by default
 input bool          AllowWednesdayTrading    = true;  // Wednesday carried most gains historically
 input bool          AllowThursdayTrading     = true;  // Thursday marginal but still allowed
-input bool          AllowFridayTrading       = false; // disable Friday entries (2nd worst weekday)
+input bool          AllowFridayTrading       = true;  // Fridays tradable (soft-penalised instead of blocked)
+input double        MondayRiskScale          = 0.65;  // soft-penalty for weak Mondays (1.0 = no change)
+input double        TuesdayRiskScale         = 1.00;  // keep full size on stronger Tuesdays
+input double        WednesdayRiskScale       = 0.85;  // mild haircut for mid-week softness
+input double        ThursdayRiskScale        = 0.90;  // slightly reduced size for marginal Thursdays
+input double        FridayRiskScale          = 0.75;  // soften risk on historically weak Fridays
 input bool          RestrictEntryHours       = true;  // enforce intraday hour whitelist
 input int           AllowedEntryHourStart    = 9;     // inclusive start hour (broker time)
 input int           AllowedEntryHourEnd      = 12;    // inclusive end hour (broker time)
@@ -94,6 +99,7 @@ const bool    RANDOMIZE_ENTRY_EXIT = false;
 const bool    ENABLE_CHART_ANNOTATIONS = true;
 const bool    ENABLE_TRADE_TELEMETRY = true;
 const int     SLIPPAGE_BUDGET_POINTS = 80;
+const int     MAX_CONCURRENT_POSITIONS = 2;
 const int     MAX_SPREAD_POINTS = 200;
 const int     PROP_DAY_START_HOUR = 0;
 const bool    USE_STATIC_OVERALL_DD = true;
@@ -440,6 +446,8 @@ void RecordClosedTradePnL(const double profit);
 bool RecentPnLPositive();
 bool IsWeekdayAllowed(const int dayOfWeek);
 bool EntryHourAllowed(const int hour);
+double WeekdayRiskScaleValue(const int dayOfWeek);
+int CountOpenPositions();
 
 
 //+------------------------------------------------------------------+
@@ -716,6 +724,15 @@ void EvaluateNewBar()
       return;
    }
 
+   int openPositions = CountOpenPositions();
+   if(openPositions>=MAX_CONCURRENT_POSITIONS)
+   {
+      if(gVerboseDecisionLog)
+         PrintFormat("ENTRY TRACE: %d open positions already active (max=%d)",
+                     openPositions,MAX_CONCURRENT_POSITIONS);
+      return;
+   }
+
    if(!gConfig.enableFallbackEntry && window!=SESSION_CORE)
    {
       if(gVerboseDecisionLog)
@@ -816,6 +833,22 @@ void EvaluateNewBar()
    {
       if(gVerboseDecisionLog)
          Print("ENTRY TRACE: EntryEngine returned no signal");
+      return;
+   }
+
+   double weekdayRiskScale = WeekdayRiskScaleValue(entryDt.day_of_week);
+   if(weekdayRiskScale!=1.0)
+   {
+      signal.riskScale *= weekdayRiskScale;
+      if(gVerboseDecisionLog)
+      {
+         PrintFormat("ENTRY TRACE: weekday risk scale %.2f applied -> combined scale %.2f",weekdayRiskScale,signal.riskScale);
+      }
+   }
+   if(signal.riskScale<=0.0)
+   {
+      if(gVerboseDecisionLog)
+         Print("ENTRY TRACE: effective risk scale <= 0 after weekday adjustment");
       return;
    }
 
@@ -1151,6 +1184,36 @@ bool EntryHourAllowed(const int hour)
    return (clampedHour>=gHourFilterStart || clampedHour<=gHourFilterEnd);
 }
 
+double WeekdayRiskScaleValue(const int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return MathMax(0.0,MondayRiskScale);
+      case 2: return MathMax(0.0,TuesdayRiskScale);
+      case 3: return MathMax(0.0,WednesdayRiskScale);
+      case 4: return MathMax(0.0,ThursdayRiskScale);
+      case 5: return MathMax(0.0,FridayRiskScale);
+      default: return 0.0;
+   }
+}
+
+int CountOpenPositions()
+{
+   int count = 0;
+   for(int i=PositionsTotal()-1;i>=0;i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket))
+         continue;
+      if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
+         continue;
+      if((ulong)PositionGetInteger(POSITION_MAGIC)!=MAGIC_NUMBER)
+         continue;
+      count++;
+   }
+   return count;
+}
+
 //+------------------------------------------------------------------+
 //| Trade transaction                                                |
 //+------------------------------------------------------------------+
@@ -1188,25 +1251,10 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
 //+------------------------------------------------------------------+
 double OnTester()
 {
-   double trades = TesterStatistics((ENUM_STATISTICS)STAT_TRADES);
-   double winTrades = TesterStatistics((ENUM_STATISTICS)STAT_PROFIT_TRADES);
    double profitFactor = TesterStatistics((ENUM_STATISTICS)STAT_PROFIT_FACTOR);
+   double netProfit = TesterStatistics((ENUM_STATISTICS)STAT_PROFIT);
    double maxDD = TesterStatistics((ENUM_STATISTICS)STAT_EQUITY_DDRELATIVE);
-   double sharpe = TesterStatistics((ENUM_STATISTICS)STAT_SHARPE_RATIO);
-   double avgHoldHours = TesterStatistics((ENUM_STATISTICS)STAT_AVG_HOLD_TIME)/3600.0;
-   double equityCorr = TesterStatistics((ENUM_STATISTICS)STAT_LINEAR_CORRELATION_EQUITY);
-   double winRate = (trades>0.0 ? winTrades/trades*100.0 : 0.0);
-
-   bool pass=true;
-   if(trades<2500 || trades>3400) pass=false;
-   if(winRate<49.0 || winRate>53.0) pass=false;
-   if(profitFactor<1.26 || profitFactor>1.36) pass=false;
-   if(maxDD>12.0) pass=false;
-   if(sharpe<1.6 || sharpe>2.4) pass=false;
-   if(avgHoldHours<6.0 || avgHoldHours>10.0) pass=false;
-   if(equityCorr<0.80) pass=false;
-
-   PrintFormat("Tester summary: trades=%.0f winRate=%.2f%% PF=%.2f DD=%.2f%% sharpe=%.2f avgHold=%.2fh corr=%.2f",
-               trades,winRate,profitFactor,maxDD,sharpe,avgHoldHours,equityCorr);
-   return pass?1.0:0.0;
+   if(maxDD<=0.0)
+      return profitFactor;
+   return (netProfit>0.0 ? profitFactor/maxDD : profitFactor/(maxDD+1.0));
 }
