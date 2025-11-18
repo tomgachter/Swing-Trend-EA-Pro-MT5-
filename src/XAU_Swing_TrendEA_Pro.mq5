@@ -641,38 +641,35 @@ bool NewsBlockActive()
 {
    if(!UseNewsFilter)
       return false;
-   if(EA_CALENDAR_SUPPORTED!=0)
+#if !defined(EA_CALENDAR_SUPPORTED) || EA_CALENDAR_SUPPORTED==0
+   static bool warned=false;
+   if(!warned)
    {
-      datetime now = TimeCurrent();
-      datetime from = now-1800;
-      datetime to = now+1800;
-      if(!CalendarSelect(from,to))
-         return false;
-      MqlCalendarEvent ev;
-      for(int i=0;i<CalendarEventTotal();i++)
-      {
-         if(!CalendarEventByIndex(i,ev))
-            continue;
-         if(ev.importance!=CALENDAR_IMPORTANCE_HIGH)
-            continue;
-         bool relevant = (ev.currency=="USD" || StringFind(StringToUpper(ev.title),"GOLD")>=0);
-         if(!relevant)
-            continue;
-         if(ev.time>=from && ev.time<=to)
-            return true;
-      }
-      return false;
+      Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
+      warned=true;
    }
-   else
+   return false;
+#else
+   datetime now = TimeCurrent();
+   datetime from = now-1800;
+   datetime to = now+1800;
+   if(!CalendarSelect(from,to))
+      return false;
+   MqlCalendarEvent ev;
+   for(int i=0;i<CalendarEventTotal();i++)
    {
-      static bool warned=false;
-      if(!warned)
-      {
-         Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
-         warned=true;
-      }
-      return false;
+      if(!CalendarEventByIndex(i,ev))
+         continue;
+      if(ev.importance!=CALENDAR_IMPORTANCE_HIGH)
+         continue;
+      bool relevant = (ev.currency=="USD" || StringFind(StringToUpper(ev.title),"GOLD")>=0);
+      if(!relevant)
+         continue;
+      if(ev.time>=from && ev.time<=to)
+         return true;
    }
+   return false;
+#endif
 }
 
 double CalcATR()
