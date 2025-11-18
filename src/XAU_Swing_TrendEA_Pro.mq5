@@ -648,6 +648,17 @@ bool NewsBlockActive()
    if(!UseNewsFilter)
       return false;
 
+#if !defined(EA_USE_NATIVE_CALENDAR)
+   // Calendar header not available on this build; keep behaviour deterministic
+   // and warn once for transparency.
+   static bool warned=false;
+   if(!warned)
+   {
+      Print("WARNING: News filter enabled, but calendar header not available on this terminal. News filter is inactive.");
+      warned=true;
+   }
+   return false;
+#else
    if(!CALENDAR_SUPPORTED)
    {
       static bool warned=false;
@@ -678,6 +689,7 @@ bool NewsBlockActive()
          return true;
    }
    return false;
+#endif
 }
 
 double CalcATR()
