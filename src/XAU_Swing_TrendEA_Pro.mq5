@@ -252,7 +252,8 @@ int OnInit()
       return INIT_PARAMETERS_INCORRECT;
    }
    const string tradeSymbol = _Symbol; // Always trade the chart symbol.
-   gExpertMagic = DerivedMagic(tradeSymbol,PERIOD_CURRENT,MagicBase);
+   // Derive a deterministic magic based on the traded symbol and the working timeframe.
+   gExpertMagic = DerivedMagic(tradeSymbol,WORK_TF,MagicBase);
    gTrader.SetExpertMagicNumber(gExpertMagic);
    gTrader.SetDeviationInPoints(80);
    gInitialEquity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -420,8 +421,10 @@ void EvaluateSignals()
    ArrayResize(lows,3);
    ArraySetAsSeries(highs,true);
    ArraySetAsSeries(lows,true);
-   CopyHigh(_Symbol,WORK_TF,1,3,highs);
-   CopyLow(_Symbol,WORK_TF,1,3,lows);
+   if(CopyHigh(_Symbol,WORK_TF,1,3,highs)<3)
+      return;
+   if(CopyLow(_Symbol,WORK_TF,1,3,lows)<3)
+      return;
 
    bool upTrend = TrendUp();
    bool downTrend = TrendDown();
@@ -575,7 +578,12 @@ bool AllowedToTradeNowInternal(string &reason)
    double minute = dt.hour*60 + dt.min;
    double startMin = DecimalHourToMinutes(StartHour);
    double endMin = DecimalHourToMinutes(EndHour);
-   if(minute<startMin || minute>endMin)
+   bool sessionClosed = false;
+   if(startMin<=endMin)
+      sessionClosed = (minute<startMin || minute>endMin);
+   else
+      sessionClosed = (minute>endMin && minute<startMin); // Overnight session window
+   if(sessionClosed)
    {
       reason = "Session closed";
       return false;
