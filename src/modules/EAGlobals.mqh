@@ -44,7 +44,7 @@ input int               MaxOpenPositions     = 2;                      // Simult
 input ENUM_RiskGuardsPreset RiskGuardsPreset = RISK_BALANCED;          // Risk guard preset
 
 input InpPreset         InpPresetSelection    = PRESET_XAUUSD_H1_DEFAULT; // Active configuration preset
-input string            InpSymbol             = "XAUUSD";                // Default (XAUUSD, H1): trading symbol
+input string            InpSymbol             = "XAUUSD";                // Nur als Preset-Hinweis, EA handelt immer _Symbol
 
 //--- Timeframes
 input ENUM_TIMEFRAMES   InpTF_Entry           = PERIOD_H1;               // Default (XAUUSD, H1): entry timeframe
@@ -396,7 +396,7 @@ void NormalizePointSensitiveSettings(EAConfig &settings,const double baselinePoi
 void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
 {
    // Shared defaults that may still leverage user supplied symbol/magic/debug values.
-   settings.symbol          = InpSymbol;
+   settings.symbol          = _Symbol; // Always trade the current chart symbol.
    settings.magic           = InpMagic;
    settings.debug           = InpDebug;
    settings.tzOffsetHours   = InpTZ_OffsetHours;
@@ -558,7 +558,7 @@ void ApplyPresetDefaults(EAConfig &settings,const InpPreset preset)
 
 void LoadInputsIntoConfig(EAConfig &settings)
 {
-   settings.symbol             = InpSymbol;
+   settings.symbol             = _Symbol; // Preset hint only; trading uses _Symbol.
    settings.tfEntry            = InpTF_Entry;
    settings.tfTrailAtr         = InpTF_TrailATR;
    settings.tfTrend1           = InpTF_Trend1;

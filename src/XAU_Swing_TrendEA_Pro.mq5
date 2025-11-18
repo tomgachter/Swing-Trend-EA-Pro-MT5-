@@ -14,11 +14,14 @@ input double        MaxDailyLossPercent      = 5.00;  // realised + open loss ca
 input double        MaxStaticDrawdownPercent = 12.00; // static equity DD kill switch (<=0 disables)
 input bool          AllowLongs               = true;  // enable long trades
 input bool          AllowShorts              = true;  // enable short trades
-input int           SessionStartHour         = 7;
-input int           SessionEndHour           = 14;
-input int           BiasMode                 = 1;
-input int           RRProfile                = 1;
-input bool          EnableFallbackEntries    = true;
+#ifdef LEGACY_COMPAT
+// Legacy-only inputs retained for backward compatibility with old setfiles.
+input int           SessionStartHour         = 7;     // Legacy placeholder (unused)
+input int           SessionEndHour           = 14;    // Legacy placeholder (unused)
+input int           BiasMode                 = 1;     // Legacy placeholder (unused)
+input int           RRProfile                = 1;     // Legacy placeholder (unused)
+input bool          EnableFallbackEntries    = true;  // Legacy placeholder (unused)
+#endif
 input bool          AllowMondayTrading       = true;
 input bool          AllowTuesdayTrading      = true;
 input bool          AllowWednesdayTrading    = true;
@@ -68,7 +71,7 @@ input double        EarlyMAE_R               = 0.7;
 input int           EarlyMAE_Minutes         = 45;
 
 // --- Safety ---------------------------------------------------------
-input int           PropagationMagic         = 20241026;
+input int           MagicBase                = 20241026; // Base magic seed (derived per symbol/TF)
 
 const string  TRADE_COMMENT = "XAU_Swing_TrendEA_Pro";
 const ENUM_TIMEFRAMES WORK_TF = PERIOD_H1;
@@ -93,6 +96,7 @@ struct WeekdayStats
 };
 
 CTrade gTrader;
+ulong gExpertMagic = 0;
 int gAtrHandle = INVALID_HANDLE;
 int gEmaFastH1 = INVALID_HANDLE;
 int gEmaSlowH1 = INVALID_HANDLE;
@@ -169,15 +173,23 @@ void UpdateRiskCountersOnClose(const double profit,const double riskMoney);
 void ManageOpenPositions();
 void ApplyTimeExits(const ulong ticket);
 void EvaluateSignals();
+bool TryOpenPositionWithCooldown(const int direction,const double volume,const double entryPrice,const double sl,const double tp);
 bool HasOpenPosition();
 void UpdateWeekdayExpectancies();
 void CloseAllPositions();
+ulong DerivedMagic(const string symbol,const ENUM_TIMEFRAMES tf,const int magicBase);
 
 // Utility helpers ----------------------------------------------------
 double DecimalHourToMinutes(const double hour)
 {
    double minutes = hour*60.0;
    return MathMax(0.0,MathMin(1439.0,minutes));
+}
+
+// Derive a deterministic magic number per symbol/timeframe to avoid collisions.
+ulong DerivedMagic(const string symbol,const ENUM_TIMEFRAMES tf,const int magicBase)
+{
+   return (ulong)(magicBase + (int)tf*100 + (int)StringGetCharacter(symbol,0));
 }
 
 void RefreshFallbackWeights()
@@ -234,7 +246,14 @@ void ReleaseIndicators()
 
 int OnInit()
 {
-   gTrader.SetExpertMagicNumber((ulong)PropagationMagic);
+   if(MagicBase==0)
+   {
+      Print("MagicBase must be non-zero to derive a unique magic number.");
+      return INIT_PARAMETERS_INCORRECT;
+   }
+   const string tradeSymbol = _Symbol; // Always trade the chart symbol.
+   gExpertMagic = DerivedMagic(tradeSymbol,PERIOD_CURRENT,MagicBase);
+   gTrader.SetExpertMagicNumber(gExpertMagic);
    gTrader.SetDeviationInPoints(80);
    gInitialEquity = AccountInfoDouble(ACCOUNT_EQUITY);
    RefreshFallbackWeights();
@@ -243,6 +262,10 @@ int OnInit()
       Print("Indicator init failed");
       return INIT_FAILED;
    }
+#if EA_CALENDAR_SUPPORTED==0
+   if(UseNewsFilter)
+      Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
+#endif
    ResetDayState();
    gLastBarTime = 0;
    return INIT_SUCCEEDED;
@@ -292,7 +315,7 @@ void SyncPositionMeta()
          continue;
       if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
          continue;
-      if(PositionGetInteger(POSITION_MAGIC)!=(long)PropagationMagic)
+      if(PositionGetInteger(POSITION_MAGIC)!=(long)gExpertMagic)
          continue;
       double entry = PositionGetDouble(POSITION_PRICE_OPEN);
       double stop = PositionGetDouble(POSITION_SL);
@@ -312,6 +335,8 @@ void SyncPositionMeta()
 void ManageOpenPositions()
 {
    SyncPositionMeta();
+   if(PositionsTotal()==0)
+      return; // Fast exit when nothing is open.
    for(int i=PositionsTotal()-1;i>=0;i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -319,8 +344,9 @@ void ManageOpenPositions()
          continue;
       if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
          continue;
-      if(PositionGetInteger(POSITION_MAGIC)!=(long)PropagationMagic)
+      if(PositionGetInteger(POSITION_MAGIC)!=(long)gExpertMagic)
          continue;
+      // Only manage positions that belong to this EA instance (symbol + derived magic).
       UpdateStops(ticket);
       ApplyTimeExits(ticket);
    }
@@ -346,6 +372,34 @@ void ApplyTimeExits(const ulong ticket)
       PrintFormat("Early MAE exit: %.2fR",meta.minR);
       gTrader.PositionClose(ticket);
    }
+}
+
+bool TryOpenPositionWithCooldown(const int direction,const double volume,const double entryPrice,const double sl,const double tp)
+{
+   static datetime lastFailTime = 0;
+   static int lastFailCode = 0;
+
+   // Avoid spamming margin-related requests for a while after a failure.
+   if(lastFailCode==ERR_NOT_ENOUGH_MONEY && (TimeCurrent()-lastFailTime)<3600)
+   {
+      Print("Skip entry due to recent ERR_NOT_ENOUGH_MONEY");
+      return false;
+   }
+
+   bool ok = (direction>0 ? gTrader.Buy(volume,_Symbol,entryPrice,sl,tp,TRADE_COMMENT)
+                          : gTrader.Sell(volume,_Symbol,entryPrice,sl,tp,TRADE_COMMENT));
+   if(!ok)
+   {
+      lastFailTime = TimeCurrent();
+      lastFailCode = GetLastError();
+      PrintFormat("Entry failed (%d) at %s",lastFailCode,TimeToString(lastFailTime,TIME_DATE|TIME_SECONDS));
+   }
+   else
+   {
+      lastFailCode = 0;
+   }
+
+   return ok;
 }
 
 void EvaluateSignals()
@@ -415,12 +469,9 @@ void EvaluateSignals()
    double volume = CalcPositionSizeByRisk(entryPrice,sl,direction);
    if(volume<=0.0)
       return;
-   bool ok = (direction>0 ? gTrader.Buy(volume,_Symbol,entryPrice,sl,tp,TRADE_COMMENT)
-                          : gTrader.Sell(volume,_Symbol,entryPrice,sl,tp,TRADE_COMMENT));
+   bool ok = TryOpenPositionWithCooldown(direction,volume,entryPrice,sl,tp);
    if(ok)
       PrintFormat("Opened %s %.2f lots",direction>0?"BUY":"SELL",volume);
-   else
-      PrintFormat("Entry failed %d",GetLastError());
 }
 
 bool HasOpenPosition()
@@ -430,7 +481,7 @@ bool HasOpenPosition()
       ulong ticket = PositionGetTicket(i);
       if(!PositionSelectByTicket(ticket))
          continue;
-      if(PositionGetInteger(POSITION_MAGIC)!=(long)PropagationMagic)
+      if(PositionGetInteger(POSITION_MAGIC)!=(long)gExpertMagic)
          continue;
       if(PositionGetString(POSITION_SYMBOL)==_Symbol)
          return true;
@@ -570,13 +621,13 @@ bool NewsBlockActive()
    if(!UseNewsFilter)
       return false;
 #if EA_CALENDAR_SUPPORTED==0
-     static bool warned=false;
-     if(!warned)
-     {
-        Print("News filter requested but economic calendar feed is unavailable in this build. Define EA_USE_NATIVE_CALENDAR if your terminal provides <Calendar/Calendar.mqh>.");
-        warned=true;
-     }
-     return false;
+   static bool warned=false;
+   if(!warned)
+   {
+      Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
+      warned=true;
+   }
+   return false;
 #else
      datetime now = TimeCurrent();
    datetime from = now-1800;
@@ -625,7 +676,7 @@ void UpdateWeekdayExpectancies()
    for(int i=0;i<total;i++)
    {
       ulong deal = HistoryDealGetTicket(i);
-      if(HistoryDealGetInteger(deal,DEAL_MAGIC)!=(long)PropagationMagic)
+      if(HistoryDealGetInteger(deal,DEAL_MAGIC)!=(long)gExpertMagic)
          continue;
       if(HistoryDealGetString(deal,DEAL_SYMBOL)!=_Symbol)
          continue;
@@ -771,7 +822,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,const MqlTradeRequest &
    ulong deal = trans.deal;
    if(deal==0)
       return;
-   if(HistoryDealGetInteger(deal,DEAL_MAGIC)!=(long)PropagationMagic)
+   if(HistoryDealGetInteger(deal,DEAL_MAGIC)!=(long)gExpertMagic)
       return;
    if(HistoryDealGetString(deal,DEAL_SYMBOL)!=_Symbol)
       return;
@@ -796,7 +847,7 @@ void CloseAllPositions()
       ulong ticket = PositionGetTicket(i);
       if(!PositionSelectByTicket(ticket))
          continue;
-      if(PositionGetInteger(POSITION_MAGIC)!=(long)PropagationMagic)
+      if(PositionGetInteger(POSITION_MAGIC)!=(long)gExpertMagic)
          continue;
       if(PositionGetString(POSITION_SYMBOL)!=_Symbol)
          continue;
