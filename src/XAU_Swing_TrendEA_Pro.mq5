@@ -264,8 +264,8 @@ int OnInit()
       return INIT_FAILED;
    }
 #if EA_CALENDAR_SUPPORTED==0
-   if(UseNewsFilter)
-      Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
+     if(UseNewsFilter)
+        Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
 #endif
    ResetDayState();
    gLastBarTime = 0;
@@ -644,9 +644,9 @@ bool NewsBlockActive()
    if(!UseNewsFilter)
       return false;
 #if EA_CALENDAR_SUPPORTED!=0
-   datetime now = TimeCurrent();
-   datetime from = now-1800;
-   datetime to = now+1800;
+     datetime now = TimeCurrent();
+     datetime from = now-1800;
+     datetime to = now+1800;
    if(!CalendarSelect(from,to))
       return false;
    MqlCalendarEvent ev;
@@ -664,13 +664,13 @@ bool NewsBlockActive()
    }
    return false;
 #else
-   static bool warned=false;
-   if(!warned)
-   {
-      Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
-      warned=true;
-   }
-   return false;
+     static bool warned=false;
+     if(!warned)
+     {
+        Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
+        warned=true;
+     }
+     return false;
 #endif
 }
 
