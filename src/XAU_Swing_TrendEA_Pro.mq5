@@ -77,10 +77,10 @@ const string  TRADE_COMMENT = "XAU_Swing_TrendEA_Pro";
 const ENUM_TIMEFRAMES WORK_TF = PERIOD_H1;
 const ENUM_TIMEFRAMES CONFIRM_TF = PERIOD_H4;
 
-#if !defined(EA_CALENDAR_SUPPORTED) || EA_CALENDAR_SUPPORTED==0
-const bool CALENDAR_SUPPORTED = false;
+#ifdef EA_CALENDAR_SUPPORTED
+const bool CALENDAR_SUPPORTED = (EA_CALENDAR_SUPPORTED!=0);
 #else
-const bool CALENDAR_SUPPORTED = true;
+const bool CALENDAR_SUPPORTED = false;
 #endif
 
 class PositionMeta
