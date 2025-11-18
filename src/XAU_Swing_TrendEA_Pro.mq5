@@ -648,7 +648,7 @@ bool NewsBlockActive()
    if(!UseNewsFilter)
       return false;
 
-#if !defined(EA_USE_NATIVE_CALENDAR)
+#ifndef EA_USE_NATIVE_CALENDAR
    // Calendar header not available on this build; keep behaviour deterministic
    // and warn once for transparency.
    static bool warned=false;
