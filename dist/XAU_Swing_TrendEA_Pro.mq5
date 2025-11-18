@@ -113,6 +113,12 @@ const string  TRADE_COMMENT = "XAU_Swing_TrendEA_Pro";
 const ENUM_TIMEFRAMES WORK_TF = PERIOD_H1;
 const ENUM_TIMEFRAMES CONFIRM_TF = PERIOD_H4;
 
+#if !defined(EA_CALENDAR_SUPPORTED) || EA_CALENDAR_SUPPORTED==0
+const bool CALENDAR_SUPPORTED = false;
+#else
+const bool CALENDAR_SUPPORTED = true;
+#endif
+
 class PositionMeta
 {
 public:
@@ -299,10 +305,8 @@ int OnInit()
       Print("Indicator init failed");
       return INIT_FAILED;
    }
-#if !defined(EA_CALENDAR_SUPPORTED) || EA_CALENDAR_SUPPORTED==0
-   if(UseNewsFilter)
+   if(EA_CALENDAR_SUPPORTED==0 && UseNewsFilter)
       Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
-#endif
    ResetDayState();
    gLastBarTime = 0;
    return INIT_SUCCEEDED;
@@ -679,15 +683,18 @@ bool NewsBlockActive()
 {
    if(!UseNewsFilter)
       return false;
-#if !defined(EA_CALENDAR_SUPPORTED) || EA_CALENDAR_SUPPORTED==0
-   static bool warned=false;
-   if(!warned)
+
+   if(!CALENDAR_SUPPORTED)
    {
-      Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
-      warned=true;
+      static bool warned=false;
+      if(!warned)
+      {
+         Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
+         warned=true;
+      }
+      return false;
    }
-   return false;
-#else
+
    datetime now = TimeCurrent();
    datetime from = now-1800;
    datetime to = now+1800;
@@ -707,7 +714,6 @@ bool NewsBlockActive()
          return true;
    }
    return false;
-#endif
 }
 
 double CalcATR()
