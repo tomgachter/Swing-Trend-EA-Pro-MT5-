@@ -263,7 +263,7 @@ int OnInit()
       Print("Indicator init failed");
       return INIT_FAILED;
    }
-#if !defined(EA_CALENDAR_SUPPORTED) || EA_CALENDAR_SUPPORTED==0
+#if EA_CALENDAR_SUPPORTED==0
    if(UseNewsFilter)
       Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
 #endif
@@ -643,15 +643,7 @@ bool NewsBlockActive()
 {
    if(!UseNewsFilter)
       return false;
-#if !defined(EA_CALENDAR_SUPPORTED) || EA_CALENDAR_SUPPORTED==0
-   static bool warned=false;
-   if(!warned)
-   {
-      Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
-      warned=true;
-   }
-   return false;
-#else
+#if EA_CALENDAR_SUPPORTED!=0
    datetime now = TimeCurrent();
    datetime from = now-1800;
    datetime to = now+1800;
@@ -669,6 +661,14 @@ bool NewsBlockActive()
          continue;
       if(ev.time>=from && ev.time<=to)
          return true;
+   }
+   return false;
+#else
+   static bool warned=false;
+   if(!warned)
+   {
+      Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
+      warned=true;
    }
    return false;
 #endif
