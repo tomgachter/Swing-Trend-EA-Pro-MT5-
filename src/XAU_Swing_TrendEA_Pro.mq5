@@ -263,7 +263,7 @@ int OnInit()
       Print("Indicator init failed");
       return INIT_FAILED;
    }
-#if EA_CALENDAR_SUPPORTED==0
+#if !defined(EA_CALENDAR_SUPPORTED) || EA_CALENDAR_SUPPORTED==0
    if(UseNewsFilter)
       Print("WARNING: News filter enabled, but calendar not supported on this terminal. News filter is inactive.");
 #endif
@@ -358,10 +358,26 @@ void ApplyTimeExits(const ulong ticket)
    PositionMeta *meta = gMeta.Get(ticket);
    if(meta==NULL)
       return;
+   datetime now = TimeCurrent();
+   MqlDateTime dt;
+   TimeToStruct(now,dt);
+   double minute = dt.hour*60 + dt.min;
+   double startMin = DecimalHourToMinutes(StartHour);
+   double endMin = DecimalHourToMinutes(EndHour);
+   bool sessionClosed = true;
+   if(startMin<=endMin)
+      sessionClosed = (minute<startMin || minute>endMin);
+   // Overnight session windows are disallowed to enforce day-only trading.
+   if(sessionClosed || dt.day_of_week==0 || dt.day_of_week==6)
+   {
+      Print("Closing position to avoid holding outside trading day");
+      gTrader.PositionClose(ticket);
+      return;
+   }
    double profit = PositionGetDouble(POSITION_PROFIT);
    double rNow = (meta.riskMoney>0.0 ? profit/meta.riskMoney : 0.0);
    meta.minR = MathMin(meta.minR,rNow);
-   double minutesInTrade = (TimeCurrent()-meta.entryTime)/60.0;
+   double minutesInTrade = (now-meta.entryTime)/60.0;
    if(minutesInTrade>=NoProgressMinutes && rNow<MinProgressR)
    {
       PrintFormat("Time exit: %.2fR after %.0f minutes",rNow,minutesInTrade);
@@ -381,9 +397,9 @@ bool TryOpenPositionWithCooldown(const int direction,const double volume,const d
    static int lastFailCode = 0;
 
    // Avoid spamming margin-related requests for a while after a failure.
-   if(lastFailCode==ERR_NOT_ENOUGH_MONEY && (TimeCurrent()-lastFailTime)<3600)
+   if(lastFailCode==TRADE_RETCODE_NO_MONEY && (TimeCurrent()-lastFailTime)<3600)
    {
-      Print("Skip entry due to recent ERR_NOT_ENOUGH_MONEY");
+      Print("Skip entry due to recent insufficient margin/money");
       return false;
    }
 
@@ -578,11 +594,10 @@ bool AllowedToTradeNowInternal(string &reason)
    double minute = dt.hour*60 + dt.min;
    double startMin = DecimalHourToMinutes(StartHour);
    double endMin = DecimalHourToMinutes(EndHour);
-   bool sessionClosed = false;
+   bool sessionClosed = true;
    if(startMin<=endMin)
       sessionClosed = (minute<startMin || minute>endMin);
-   else
-      sessionClosed = (minute>endMin && minute<startMin); // Overnight session window
+   // Overnight session windows are disallowed to enforce day-only trading.
    if(sessionClosed)
    {
       reason = "Session closed";
@@ -628,7 +643,7 @@ bool NewsBlockActive()
 {
    if(!UseNewsFilter)
       return false;
-#if EA_CALENDAR_SUPPORTED==0
+#if !defined(EA_CALENDAR_SUPPORTED) || EA_CALENDAR_SUPPORTED==0
    static bool warned=false;
    if(!warned)
    {
@@ -637,7 +652,7 @@ bool NewsBlockActive()
    }
    return false;
 #else
-     datetime now = TimeCurrent();
+   datetime now = TimeCurrent();
    datetime from = now-1800;
    datetime to = now+1800;
    if(!CalendarSelect(from,to))
